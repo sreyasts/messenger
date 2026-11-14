@@ -2,8 +2,8 @@
 
 <div align="center">
 
-[![Platform Android](https://img.shields.io/badge/Platform-Android_Native_APK-3DDC84?logo=android&logoColor=white)](https://github.com/sreyas-ts/messenger/releases)
-[![Platform Web PWA](https://img.shields.io/badge/Platform-Web_PWA_Installable-000000?logo=pwa&logoColor=white)](https://github.com/sreyas-ts/messenger)
+[![Platform Android](https://img.shields.io/badge/Platform-Android_Native_APK-3DDC84?logo=android&logoColor=white)](https://github.com/sreyasts/messenger/releases)
+[![Platform Web PWA](https://img.shields.io/badge/Platform-Web_PWA_Installable-000000?logo=pwa&logoColor=white)](https://github.com/sreyasts/messenger)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.20-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack_Compose-Material_3-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Android SDK](https://img.shields.io/badge/Android_SDK-minSdk_26_%7C_targetSdk_35-3DDC84?logo=android)](https://developer.android.com)
@@ -190,7 +190,7 @@ All interfaces are designed with a **Pure OLED Black (`#000000`)** design system
 
 ### 1. Clone & Install Monorepo
 ```bash
-git clone https://github.com/sreyas-ts/messenger.git
+git clone https://github.com/sreyasts/messenger.git
 cd messenger
 
 # Install dependencies across all workspaces
@@ -250,20 +250,19 @@ cd apps/android
 
 Precompiled Android APK releases are built automatically via GitHub Actions CI/CD on every release tag:
 
-1. Navigate to the **[Releases](https://github.com/sreyas-ts/messenger/releases)** tab.
-2. Download the latest `messenger-v1.0.0.apk`.
+1. Navigate to the **[Releases](https://github.com/sreyasts/messenger/releases)** tab.
+2. Download the latest prebuilt APK directly: **[Messenger-v1.0.0.apk (app-debug.apk)](https://github.com/sreyasts/messenger/releases/download/v1.0.0/app-debug.apk)**.
 3. Verify the file SHA-256 checksum:
    ```powershell
-   Get-FileHash -Algorithm SHA256 messenger-v1.0.0.apk
+   Get-FileHash -Algorithm SHA256 app-debug.apk
    ```
-4. Transfer to your Android device (or download directly) and tap to install (enable "Install unknown apps" if prompted).
+4. Transfer to your Android device (or download directly on device) and tap to install (enable "Install unknown apps" if prompted).
 
 ---
 
 ## 📁 Monorepo Layout
 
 ```
-d:\projects\messenger\
 ├── .github/
 │   └── workflows/
 │       └── release.yml          # Automated Android APK build & GitHub release pipeline
@@ -275,9 +274,11 @@ d:\projects\messenger\
 │   │   │       ├── data/auth/   # AuthSessionManager.kt (Google Sign-In gate session)
 │   │   │       ├── data/storage/# ViewOnceStorage.kt (Persistent viewed state)
 │   │   │       ├── data/update/ # UpdatePolicy.kt & UpdateManager.kt (In-app updates)
-│   │   │       ├── core/        # WebRTC P2P DataChannel, LiveKit SFU, Telecom API
+│   │   │       ├── telecom/     # Telecom CallStyle lock screen notifications & service
+│   │   │       ├── webrtc/      # WebRTC P2P DataChannel (64KB chunks, backpressure)
+│   │   │       ├── work/        # WorkManager background 1 GB file transfer worker
 │   │   │       └── ui/screens/  # AuthScreen, ChatsListScreen, ChatDetailScreen, ProfileScreen
-│   │   └── app/src/test/        # Unit tests (UpdatePolicyTest, P2P chunking, SHA-256)
+│   │   └── app/src/test/        # Unit tests (UpdatePolicyTest, AndroidArchitectureTest)
 │   └── web/                     # Secondary PWA Client (Next.js 15, React 19, TypeScript)
 │       ├── public/              # Web app manifest, service worker, icons
 │       └── src/
@@ -285,17 +286,26 @@ d:\projects\messenger\
 │           ├── components/      # GoogleSignInGate, ChatsList, ChatInterface, ViewOnceModal
 │           └── lib/             # Supabase client, WebRTC P2P engine, LiveKit client
 ├── docs/
-│   └── screenshots/             # High-fidelity OLED vector UI mockups (6 SVG assets)
+│   ├── screenshots/             # High-fidelity OLED vector UI mockups (6 SVG assets)
+│   └── testing/                 # E2E test infrastructure & readiness specifications
 ├── scripts/
 │   ├── verify-e2e.js            # Monorepo test runner orchestrating all 5 test suites
 │   ├── test-android-contracts.js# Android platform & manifest contract tests
-│   ├── test-backend-contracts.js# Supabase schema & LiveKit token tests
-│   ├── test-webrtc-contracts.js # 1 GB DataChannel chunking & flow control tests
-│   └── test-retention-lifecycle.js # View-Once & audit retention tests
+│   ├── test-contracts.js        # Supabase schema & LiveKit token tests
+│   ├── test-webrtc-streaming.js # 1 GB DataChannel chunking & flow control tests
+│   ├── test-retention-security.js # View-Once & audit retention tests
+│   ├── test-theme-pwa.js        # OLED theme & PWA manifest contract tests
+│   ├── stress-test-livekit-edge.js # Edge function stress & load tests
+│   └── generate-icons.js        # PWA maskable SVG/PNG icon generation utility
 ├── supabase/
 │   ├── functions/livekit-token/ # Deno Edge Function for LiveKit JWT tokens
 │   └── migrations/              # 9-table schema, RLS policies, triggers, storage buckets
+├── .env.example                 # Environment variables template for Supabase & LiveKit
+├── .gitattributes               # Cross-platform line ending normalization
+├── .gitignore                   # Monorepo build artifact ignores
 ├── GEMINI.md                    # Single source of truth architectural contract
+├── LICENSE                      # MIT Open Source License
+├── package.json                 # Monorepo workspace configuration & CLI shortcuts
 ├── PROJECT.md                   # Feature inventory, milestone status & platform contracts
 └── README.md                    # Open-source presentation & documentation (this file)
 ```
