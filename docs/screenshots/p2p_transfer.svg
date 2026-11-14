@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 380" width="620" height="380">
+  <defs>
+    <linearGradient id="p2pGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00C6FF"/>
+      <stop offset="100%" stop-color="#0072FF"/>
+    </linearGradient>
+    <linearGradient id="chunkGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8A2387"/>
+      <stop offset="50%" stop-color="#E94057"/>
+      <stop offset="100%" stop-color="#F27121"/>
+    </linearGradient>
+    <filter id="boxShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#0072FF" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+
+  <!-- OLED Pure Black Canvas -->
+  <rect x="0" y="0" width="620" height="380" rx="20" fill="#000000" stroke="#2A2A2A" stroke-width="1.5"/>
+
+  <!-- Top Title & Architecture Badges -->
+  <g transform="translate(24, 28)">
+    <text x="0" y="20" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="800">1 GB Direct WebRTC P2P DataChannel Engine</text>
+    <text x="0" y="38" fill="#A0A0A0" font-family="sans-serif" font-size="12">$0 Cloud Bandwidth &amp; $0 Object Storage Architecture</text>
+
+    <rect x="440" y="2" width="130" height="26" rx="13" fill="#10B981" fill-opacity="0.15" stroke="#10B981"/>
+    <text x="505" y="19" fill="#10B981" font-family="sans-serif" font-size="11" font-weight="700" text-anchor="middle">$0 CLOUD COST</text>
+  </g>
+
+  <!-- Architecture Flow Pipeline Diagram -->
+  <g transform="translate(24, 82)">
+    <!-- Node A: Sender Peer -->
+    <rect x="0" y="0" width="160" height="110" rx="14" fill="#121212" stroke="#2A2A2A"/>
+    <circle cx="28" cy="28" r="14" fill="url(#p2pGlow)"/>
+    <text x="28" y="32" fill="#FFFFFF" font-family="sans-serif" font-size="11" font-weight="800" text-anchor="middle">TX</text>
+    <text x="50" y="26" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="700">Sender Peer</text>
+    <text x="50" y="40" fill="#A0A0A0" font-family="sans-serif" font-size="10.5">Android / Web Client</text>
+    <line x1="14" y1="56" x2="146" y2="56" stroke="#1E1E1E"/>
+    <text x="14" y="74" fill="#38A9FF" font-family="sans-serif" font-size="10.5" font-weight="600">• 64 KB Chunk Slicing</text>
+    <text x="14" y="92" fill="#38A9FF" font-family="sans-serif" font-size="10.5" font-weight="600">• 4MB/1MB Flow Control</text>
+
+    <!-- WebRTC DataChannel Pipeline (Center Bridge) -->
+    <g transform="translate(176, 20)">
+      <!-- DataChannel Pipe Background -->
+      <rect x="0" y="12" width="220" height="46" rx="23" fill="#141418" stroke="#0084FF" stroke-width="1.5" stroke-dasharray="6 3"/>
+      
+      <!-- Moving Binary Chunks Simulation -->
+      <rect x="18" y="24" width="30" height="22" rx="4" fill="url(#chunkGrad)"/>
+      <text x="33" y="38" fill="#FFFFFF" font-family="monospace" font-size="9" font-weight="700" text-anchor="middle">64K</text>
+
+      <rect x="58" y="24" width="30" height="22" rx="4" fill="url(#chunkGrad)"/>
+      <text x="73" y="38" fill="#FFFFFF" font-family="monospace" font-size="9" font-weight="700" text-anchor="middle">64K</text>
+
+      <rect x="98" y="24" width="30" height="22" rx="4" fill="url(#chunkGrad)"/>
+      <text x="113" y="38" fill="#FFFFFF" font-family="monospace" font-size="9" font-weight="700" text-anchor="middle">64K</text>
+
+      <rect x="138" y="24" width="30" height="22" rx="4" fill="url(#chunkGrad)"/>
+      <text x="153" y="38" fill="#FFFFFF" font-family="monospace" font-size="9" font-weight="700" text-anchor="middle">64K</text>
+
+      <rect x="178" y="24" width="26" height="22" rx="4" fill="url(#chunkGrad)"/>
+      <text x="191" y="38" fill="#FFFFFF" font-family="monospace" font-size="9" font-weight="700" text-anchor="middle">64K</text>
+
+      <text x="110" y="76" fill="#00C6FF" font-family="sans-serif" font-size="11" font-weight="700" text-anchor="middle">Direct RTCDataChannel (P2P Mesh)</text>
+    </g>
+
+    <!-- Node B: Receiver Peer -->
+    <rect x="412" y="0" width="160" height="110" rx="14" fill="#121212" stroke="#2A2A2A"/>
+    <circle cx="440" cy="28" r="14" fill="url(#chunkGrad)"/>
+    <text x="440" y="32" fill="#FFFFFF" font-family="sans-serif" font-size="11" font-weight="800" text-anchor="middle">RX</text>
+    <text x="462" y="26" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="700">Receiver Peer</text>
+    <text x="462" y="40" fill="#A0A0A0" font-family="sans-serif" font-size="10.5">Android / Web Client</text>
+    <line x1="426" y1="56" x2="558" y2="56" stroke="#1E1E1E"/>
+    <text x="426" y="74" fill="#38EF7D" font-family="sans-serif" font-size="10.5" font-weight="600">• Streaming Reassembly</text>
+    <text x="426" y="92" fill="#38EF7D" font-family="sans-serif" font-size="10.5" font-weight="600">• Incremental SHA-256</text>
+  </g>
+
+  <!-- Live Transfer Progress Card Simulation -->
+  <g transform="translate(24, 218)" filter="url(#boxShadow)">
+    <rect x="0" y="0" width="572" height="136" rx="16" fill="#121212" stroke="#2A2A2A" stroke-width="1.2"/>
+
+    <!-- File Icon & Transfer Title -->
+    <rect x="18" y="18" width="40" height="46" rx="8" fill="#0072FF" fill-opacity="0.15"/>
+    <path d="M30 28 L40 28 L46 34 L46 54 L30 54 Z" fill="none" stroke="#00C6FF" stroke-width="2"/>
+    <text x="70" y="36" fill="#FFFFFF" font-family="sans-serif" font-size="15" font-weight="700">linux_distribution_full_image.iso</text>
+    <text x="70" y="54" fill="#A0A0A0" font-family="sans-serif" font-size="12">940.0 MB total • WebRTC Direct P2P DataChannel</text>
+
+    <!-- Progress Bar (92%) -->
+    <rect x="18" y="76" width="536" height="10" rx="5" fill="#222222"/>
+    <rect x="18" y="76" width="493" height="10" rx="5" fill="url(#p2pGlow)"/>
+
+    <!-- Transfer Metrics -->
+    <text x="18" y="106" fill="#FFFFFF" font-family="sans-serif" font-size="12" font-weight="600">864.8 MB / 940 MB (92%)</text>
+    <text x="260" y="106" fill="#38EF7D" font-family="sans-serif" font-size="12" font-weight="700">22.4 MB/s (Direct Wi-Fi / LAN / STUN)</text>
+    <text x="554" y="106" fill="#A0A0A0" font-family="sans-serif" font-size="12" text-anchor="end">ETA: 3s</text>
+
+    <!-- Checksum Verification Badge -->
+    <rect x="18" y="116" width="310" height="16" rx="4" fill="#181818"/>
+    <text x="24" y="128" fill="#10B981" font-family="monospace" font-size="10">✓ SHA-256 HASH VERIFIED: 8f4a13c9e0d1...33a1</text>
+  </g>
+</svg>

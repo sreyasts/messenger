@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 860" width="420" height="860">
+  <defs>
+    <linearGradient id="vpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8A2387"/>
+      <stop offset="50%" stop-color="#E94057"/>
+      <stop offset="100%" stop-color="#F27121"/>
+    </linearGradient>
+    <radialGradient id="neonGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#E1306C" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="modalGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#E1306C" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Device Frame & OLED Pure Black Canvas -->
+  <rect x="0" y="0" width="420" height="860" rx="36" fill="#000000" stroke="#2A2A2A" stroke-width="2"/>
+
+  <!-- Dimmed Background Chat Context (Blurred Simulation) -->
+  <g opacity="0.12">
+    <rect x="16" y="80" width="280" height="50" rx="14" fill="#FFFFFF"/>
+    <rect x="140" y="150" width="260" height="60" rx="14" fill="#FFFFFF"/>
+    <rect x="16" y="230" width="290" height="80" rx="14" fill="#FFFFFF"/>
+    <rect x="120" y="330" width="280" height="70" rx="14" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Fullscreen Modal Overlay (OLED #000000 96% opacity) -->
+  <rect x="0" y="0" width="420" height="860" rx="36" fill="#000000" fill-opacity="0.96"/>
+
+  <!-- Ambient Glow Behind Media Card -->
+  <circle cx="210" cy="380" r="180" fill="url(#neonGlow)"/>
+
+  <!-- Status Bar -->
+  <text x="32" y="32" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600">9:41</text>
+  <rect x="382" y="21" width="20" height="11" rx="3" fill="none" stroke="#FFFFFF" stroke-width="1.5"/>
+  <rect x="384" y="23" width="14" height="7" rx="1.5" fill="#10B981"/>
+
+  <!-- Top Modal Bar -->
+  <g id="modalTopBar" transform="translate(0, 50)">
+    <!-- Close Button (X) -->
+    <circle cx="36" cy="20" r="18" fill="#1A1A1A" stroke="#2A2A2A"/>
+    <path d="M28 12 L44 28 M44 12 L28 28" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+
+    <!-- Countdown Timer Pill -->
+    <rect x="146" y="6" width="128" height="28" rx="14" fill="#1A1A1A" stroke="#E1306C" stroke-width="1.5"/>
+    <circle cx="162" cy="20" r="5" fill="#E1306C"/>
+    <text x="174" y="24" fill="#FFFFFF" font-family="sans-serif" font-size="12" font-weight="700">00:08 remaining</text>
+
+    <!-- FLAG_SECURE Indicator -->
+    <circle cx="384" cy="20" r="18" fill="#1A1A1A" stroke="#2A2A2A"/>
+    <text x="384" y="24" font-size="12" text-anchor="middle">🔒</text>
+  </g>
+
+  <!-- Security Banner (Android FLAG_SECURE & Permanent Ephemeral Rule) -->
+  <g id="securityBanner" transform="translate(24, 110)">
+    <rect x="0" y="0" width="372" height="42" rx="12" fill="#121212" stroke="#2A2A2A" stroke-width="1"/>
+    <text x="186" y="21" fill="#E1306C" font-family="sans-serif" font-size="11.5" font-weight="700" text-anchor="middle">🔒 FLAG_SECURE ENGAGED • SCREENSHOTS BLOCKED</text>
+    <text x="186" y="34" fill="#A0A0A0" font-family="sans-serif" font-size="10" text-anchor="middle">This media will be permanently locked once closed.</text>
+  </g>
+
+  <!-- View-Once Media Content Card (Image/Secret Text Dual Preview) -->
+  <g id="mediaCard" transform="translate(24, 172)" filter="url(#modalGlow)">
+    <rect x="0" y="0" width="372" height="420" rx="24" fill="#141416" stroke="#2A2A2A" stroke-width="1.5"/>
+
+    <!-- High-Fidelity Photo Mockup Canvas -->
+    <rect x="16" y="16" width="340" height="260" rx="16" fill="#1C1C1E"/>
+    <!-- Mock Cyberpunk City Silhouette in photo -->
+    <path d="M30 250 L60 170 L90 200 L120 150 L160 210 L200 130 L230 180 L270 140 L310 210 L340 180 L340 260 L30 260 Z" fill="#242428"/>
+    <circle cx="280" cy="80" r="30" fill="url(#vpGrad)" fill-opacity="0.8"/>
+    <text x="186" y="160" fill="#FFFFFF" fill-opacity="0.4" font-family="sans-serif" font-size="14" font-weight="700" text-anchor="middle">CONFIDENTIAL CAPTURE</text>
+
+    <!-- Sender Details Strip inside modal -->
+    <g transform="translate(24, 290)">
+      <circle cx="16" cy="16" r="14" fill="url(#vpGrad)"/>
+      <text x="16" y="20" fill="#FFFFFF" font-family="sans-serif" font-size="10" font-weight="700" text-anchor="middle">SC</text>
+      <text x="40" y="14" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="700">Sarah Connor</text>
+      <text x="40" y="28" fill="#666666" font-family="sans-serif" font-size="11">Sent Today at 10:42 AM</text>
+    </g>
+
+    <!-- View-Once Text Message Content (R3 Requirement) -->
+    <rect x="20" y="336" width="332" height="64" rx="12" fill="#1A1A1A" stroke="#2A2A2A"/>
+    <text x="32" y="358" fill="#E1306C" font-family="sans-serif" font-size="10.5" font-weight="700">ATTACHED VIEW-ONCE TEXT MEMO:</text>
+    <text x="32" y="378" fill="#FFFFFF" font-family="monospace" font-size="12" font-weight="600">DECRYPT-KEY: 9f8a-e27c-01bc-messenger</text>
+  </g>
+
+  <!-- Permanent Lock Notification -->
+  <g id="auditInfo" transform="translate(24, 616)">
+    <rect x="0" y="0" width="372" height="74" rx="16" fill="#121212" stroke="#2A2A2A"/>
+    <circle cx="32" cy="37" r="14" fill="#1A1A1A"/>
+    <text x="32" y="42" font-size="14" text-anchor="middle">👁️</text>
+    <text x="58" y="30" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="700">Permanent Opened State Guarantee</text>
+    <text x="58" y="46" fill="#A0A0A0" font-family="sans-serif" font-size="11">Closing this modal marks viewed_at in PostgreSQL.</text>
+    <text x="58" y="60" fill="#A0A0A0" font-family="sans-serif" font-size="11">Media will never reappear on chat reopen or app restart.</text>
+  </g>
+
+  <!-- Close & Lock Button -->
+  <g id="closeAction" transform="translate(24, 712)">
+    <rect x="0" y="0" width="372" height="54" rx="16" fill="url(#vpGrad)"/>
+    <text x="186" y="33" fill="#FFFFFF" font-family="sans-serif" font-size="15" font-weight="800" text-anchor="middle">Done Viewing (Lock Permanently)</text>
+  </g>
+
+  <!-- Bottom Home Indicator -->
+  <rect x="150" y="846" width="120" height="4" rx="2" fill="#444444"/>
+</svg>

@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 860" width="420" height="860">
+  <defs>
+    <linearGradient id="vpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8A2387"/>
+      <stop offset="50%" stop-color="#E94057"/>
+      <stop offset="100%" stop-color="#F27121"/>
+    </linearGradient>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00C6FF"/>
+      <stop offset="100%" stop-color="#0072FF"/>
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#11998E"/>
+      <stop offset="100%" stop-color="#38EF7D"/>
+    </linearGradient>
+    <linearGradient id="crimsonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF416C"/>
+      <stop offset="100%" stop-color="#FF4B2B"/>
+    </linearGradient>
+    <linearGradient id="monoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#434343"/>
+      <stop offset="100%" stop-color="#111111"/>
+    </linearGradient>
+    <filter id="avatarShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#E1306C" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Device Frame & OLED Pure Black Canvas -->
+  <rect x="0" y="0" width="420" height="860" rx="36" fill="#000000" stroke="#2A2A2A" stroke-width="2"/>
+
+  <!-- Status Bar -->
+  <text x="32" y="32" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600">9:41</text>
+  <circle cx="355" cy="27" r="4" fill="#FFFFFF"/>
+  <rect x="365" y="23" width="12" height="8" rx="2" fill="#FFFFFF"/>
+  <rect x="382" y="21" width="20" height="11" rx="3" fill="none" stroke="#FFFFFF" stroke-width="1.5"/>
+  <rect x="384" y="23" width="14" height="7" rx="1.5" fill="#10B981"/>
+
+  <!-- Header -->
+  <g id="topBar">
+    <rect x="0" y="44" width="420" height="64" fill="#121212"/>
+    <path d="M24 76 L34 66 M24 76 L34 86" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+    <text x="64" y="82" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="700">User Profile</text>
+    <text x="396" y="82" fill="#E1306C" font-family="sans-serif" font-size="14" font-weight="700" text-anchor="end">Edit</text>
+  </g>
+
+  <!-- Profile Card (Avatar, Name, Bio, Google Auth) -->
+  <g id="profileHero" transform="translate(0, 120)">
+    <!-- Avatar with Vibrant Violet-Pink Gradient Ring -->
+    <circle cx="210" cy="50" r="48" fill="none" stroke="url(#vpGrad)" stroke-width="3" filter="url(#avatarShadow)"/>
+    <circle cx="210" cy="50" r="42" fill="#161616"/>
+    <circle cx="210" cy="50" r="42" fill="url(#vpGrad)" fill-opacity="0.85"/>
+    <text x="210" y="58" fill="#FFFFFF" font-family="sans-serif" font-size="28" font-weight="800" text-anchor="middle">AF</text>
+    <!-- Online status badge -->
+    <circle cx="242" cy="84" r="8" fill="#10B981" stroke="#000000" stroke-width="2.5"/>
+
+    <!-- Display Name & Email -->
+    <text x="210" y="122" fill="#FFFFFF" font-family="sans-serif" font-size="22" font-weight="800" text-anchor="middle">Alex Friend</text>
+    <text x="210" y="142" fill="#A0A0A0" font-family="sans-serif" font-size="13" text-anchor="middle">alex@privatemessenger.com</text>
+
+    <!-- Bio / Description (R2 Compliance) -->
+    <rect x="40" y="156" width="340" height="42" rx="12" fill="#121212" stroke="#2A2A2A"/>
+    <text x="210" y="181" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-style="italic" text-anchor="middle">"Building private, $0-cost communication tools 🔒"</text>
+
+    <!-- Google OAuth Verified Badge -->
+    <rect x="110" y="210" width="200" height="28" rx="14" fill="#1A1A1A" stroke="#2A2A2A"/>
+    <circle cx="128" cy="224" r="6" fill="#4285F4"/>
+    <text x="142" y="228" fill="#FFFFFF" font-family="sans-serif" font-size="11" font-weight="600">Google Account Verified</text>
+  </g>
+
+  <!-- Settings Section: Theme Accent Selector -->
+  <g id="themeSection" transform="translate(20, 380)">
+    <text x="4" y="0" fill="#A0A0A0" font-family="sans-serif" font-size="12" font-weight="700" letter-spacing="1">THEME ACCENT</text>
+    <rect x="0" y="12" width="380" height="74" rx="16" fill="#121212" stroke="#2A2A2A"/>
+
+    <!-- 5 Accents -->
+    <!-- Violet-Pink (Selected) -->
+    <circle cx="48" cy="49" r="18" fill="url(#vpGrad)" stroke="#FFFFFF" stroke-width="2.5"/>
+    <text x="48" y="53" fill="#FFFFFF" font-family="sans-serif" font-size="12" font-weight="800" text-anchor="middle">✓</text>
+
+    <!-- Ocean Blue -->
+    <circle cx="118" cy="49" r="16" fill="url(#blueGrad)"/>
+
+    <!-- Emerald -->
+    <circle cx="188" cy="49" r="16" fill="url(#emeraldGrad)"/>
+
+    <!-- Crimson -->
+    <circle cx="258" cy="49" r="16" fill="url(#crimsonGrad)"/>
+
+    <!-- Monochrome -->
+    <circle cx="328" cy="49" r="16" fill="url(#monoGrad)" stroke="#444444" stroke-width="1.5"/>
+  </g>
+
+  <!-- Settings Section: Personalization & Media -->
+  <g id="settingsGroup" transform="translate(20, 484)">
+    <text x="4" y="0" fill="#A0A0A0" font-family="sans-serif" font-size="12" font-weight="700" letter-spacing="1">PREFERENCES & MEDIA</text>
+    <rect x="0" y="12" width="380" height="150" rx="16" fill="#121212" stroke="#2A2A2A"/>
+
+    <!-- Sticker Packs -->
+    <g transform="translate(16, 26)">
+      <circle cx="16" cy="16" r="14" fill="#1A1A1A"/>
+      <text x="16" y="20" font-size="14" text-anchor="middle">🎨</text>
+      <text x="42" y="16" fill="#FFFFFF" font-family="sans-serif" font-size="14" font-weight="600">Sticker Packs</text>
+      <text x="42" y="30" fill="#666666" font-family="sans-serif" font-size="11">3 custom packs created</text>
+      <text x="340" y="24" fill="#A0A0A0" font-family="sans-serif" font-size="14">›</text>
+    </g>
+    <line x1="58" y1="72" x2="360" y2="72" stroke="#1E1E1E"/>
+
+    <!-- Chat Wallpaper -->
+    <g transform="translate(16, 86)">
+      <circle cx="16" cy="16" r="14" fill="#1A1A1A"/>
+      <text x="16" y="20" font-size="14" text-anchor="middle">🖼️</text>
+      <text x="42" y="16" fill="#FFFFFF" font-family="sans-serif" font-size="14" font-weight="600">Chat Wallpaper</text>
+      <text x="42" y="30" fill="#666666" font-family="sans-serif" font-size="11">Pure OLED (#000000)</text>
+      <text x="340" y="24" fill="#A0A0A0" font-family="sans-serif" font-size="14">›</text>
+    </g>
+  </g>
+
+  <!-- Security & App Specs (No Block Button - R2 Compliant) -->
+  <g id="securityInfo" transform="translate(20, 664)">
+    <rect x="0" y="0" width="380" height="60" rx="14" fill="#121212" stroke="#2A2A2A"/>
+    <circle cx="30" cy="30" r="14" fill="#1A1A1A"/>
+    <text x="30" y="34" font-size="13" text-anchor="middle">🛡️</text>
+    <text x="56" y="26" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="600">Zero-Cost Monorepo Protocol</text>
+    <text x="56" y="42" fill="#10B981" font-family="sans-serif" font-size="11">Version 1.0.0 (Build 1) • Verified</text>
+  </g>
+
+  <!-- Sign Out Button (Compliant clean sign-out) -->
+  <g id="signOutAction" transform="translate(20, 744)">
+    <rect x="0" y="0" width="380" height="52" rx="14" fill="#1A1A1A" stroke="#EF4444" stroke-width="1.2"/>
+    <text x="190" y="32" fill="#EF4444" font-family="sans-serif" font-size="15" font-weight="700" text-anchor="middle">Sign Out of Messenger</text>
+  </g>
+
+  <!-- Bottom Home Indicator -->
+  <rect x="150" y="846" width="120" height="4" rx="2" fill="#444444"/>
+</svg>

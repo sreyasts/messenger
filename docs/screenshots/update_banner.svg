@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 360" width="540" height="360">
+  <defs>
+    <linearGradient id="vpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8A2387"/>
+      <stop offset="50%" stop-color="#E94057"/>
+      <stop offset="100%" stop-color="#F27121"/>
+    </linearGradient>
+    <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#11998E"/>
+      <stop offset="100%" stop-color="#38EF7D"/>
+    </linearGradient>
+    <filter id="cardGlow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#00C6FF" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- OLED Pure Black Canvas -->
+  <rect x="0" y="0" width="540" height="360" rx="20" fill="#000000" stroke="#2A2A2A" stroke-width="1.5"/>
+
+  <!-- Top Title & Badge -->
+  <g transform="translate(24, 28)">
+    <text x="0" y="20" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="18" font-weight="800">R4: Android In-App Update System</text>
+    <text x="0" y="38" fill="#A0A0A0" font-family="sans-serif" font-size="12">Automated GitHub Releases &amp; Supabase Release Engine</text>
+
+    <rect x="360" y="2" width="132" height="26" rx="13" fill="#121212" stroke="#10B981" stroke-width="1.2"/>
+    <circle cx="374" cy="15" r="4" fill="#10B981"/>
+    <text x="384" y="19" fill="#10B981" font-family="sans-serif" font-size="11" font-weight="700">VERSION ENGINE</text>
+  </g>
+
+  <!-- Primary In-App Update Banner Card (As rendered in Android APK) -->
+  <g transform="translate(24, 86)" filter="url(#cardGlow)">
+    <rect x="0" y="0" width="492" height="112" rx="18" fill="#121212" stroke="#2A2A2A" stroke-width="1.5"/>
+
+    <!-- Sparkle / Rocket Icon Circle -->
+    <circle cx="44" cy="56" r="24" fill="url(#vpGrad)"/>
+    <!-- Rocket / Arrow path -->
+    <path d="M44 42 L44 58 M37 49 L44 42 L51 49 M34 68 L54 68" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Banner Text -->
+    <text x="82" y="44" fill="#FFFFFF" font-family="sans-serif" font-size="16" font-weight="800">New Release Available: v1.1.0</text>
+    <text x="82" y="66" fill="#A0A0A0" font-family="sans-serif" font-size="12">A newer version of Messenger is ready on GitHub Releases.</text>
+    <text x="82" y="84" fill="#666666" font-family="sans-serif" font-size="11">Current: v1.0.0 (code 1) • Latest: v1.1.0 (code 2)</text>
+
+    <!-- Update Action Button -->
+    <rect x="376" y="38" width="98" height="36" rx="10" fill="url(#vpGrad)"/>
+    <text x="425" y="61" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="800" text-anchor="middle">UPDATE</text>
+  </g>
+
+  <!-- Technical Verification Matrix & Debug Suppression Callouts -->
+  <g transform="translate(24, 222)">
+    <!-- Card 1: Production Behavior -->
+    <rect x="0" y="0" width="238" height="110" rx="14" fill="#141416" stroke="#2A2A2A"/>
+    <rect x="12" y="12" width="78" height="20" rx="10" fill="#10B981" fill-opacity="0.2"/>
+    <text x="51" y="26" fill="#10B981" font-family="sans-serif" font-size="10.5" font-weight="700" text-anchor="middle">PRODUCTION</text>
+    <text x="12" y="52" fill="#FFFFFF" font-family="sans-serif" font-size="12" font-weight="700">Display Update Banner</text>
+    <text x="12" y="70" fill="#A0A0A0" font-family="sans-serif" font-size="11">Active when remote versionCode &gt;</text>
+    <text x="12" y="86" fill="#A0A0A0" font-family="sans-serif" font-size="11">current versionCode in release build.</text>
+    <circle cx="218" cy="22" r="5" fill="#10B981"/>
+
+    <!-- Card 2: Debug / Test Suppression (Strict Acceptance Rule) -->
+    <rect x="254" y="0" width="238" height="110" rx="14" fill="#141416" stroke="#2A2A2A"/>
+    <rect x="266" y="12" width="94" height="20" rx="10" fill="#EF4444" fill-opacity="0.2"/>
+    <text x="313" y="26" fill="#EF4444" font-family="sans-serif" font-size="10.5" font-weight="700" text-anchor="middle">DEBUG BUILD</text>
+    <text x="266" y="52" fill="#FFFFFF" font-family="sans-serif" font-size="12" font-weight="700">Strict Suppression (Hidden)</text>
+    <text x="266" y="70" fill="#A0A0A0" font-family="sans-serif" font-size="11">BuildConfig.DEBUG == true</text>
+    <text x="266" y="86" fill="#A0A0A0" font-family="sans-serif" font-size="11">UpdatePolicy suppresses banner 100%.</text>
+    <circle cx="472" cy="22" r="5" fill="#EF4444"/>
+  </g>
+</svg>

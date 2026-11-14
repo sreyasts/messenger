@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 860" width="420" height="860">
+  <defs>
+    <linearGradient id="bubbleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8A2387"/>
+      <stop offset="50%" stop-color="#E94057"/>
+      <stop offset="100%" stop-color="#F27121"/>
+    </linearGradient>
+    <linearGradient id="p2pBar" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00C6FF"/>
+      <stop offset="100%" stop-color="#0072FF"/>
+    </linearGradient>
+    <linearGradient id="avatarGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00C6FF"/>
+      <stop offset="100%" stop-color="#0072FF"/>
+    </linearGradient>
+    <filter id="msgShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Device Frame & OLED Canvas -->
+  <rect x="0" y="0" width="420" height="860" rx="36" fill="#000000" stroke="#2A2A2A" stroke-width="2"/>
+
+  <!-- Status Bar -->
+  <text x="32" y="32" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="14" font-weight="600">9:41</text>
+  <circle cx="355" cy="27" r="4" fill="#FFFFFF"/>
+  <rect x="365" y="23" width="12" height="8" rx="2" fill="#FFFFFF"/>
+  <rect x="382" y="21" width="20" height="11" rx="3" fill="none" stroke="#FFFFFF" stroke-width="1.5"/>
+  <rect x="384" y="23" width="14" height="7" rx="1.5" fill="#10B981"/>
+
+  <!-- Chat Top Bar -->
+  <g id="header">
+    <rect x="0" y="44" width="420" height="68" fill="#121212" stroke="#1E1E1E" stroke-width="1"/>
+    <!-- Back Button -->
+    <path d="M24 78 L34 68 M24 78 L34 88" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    
+    <!-- Contact Avatar & Info -->
+    <circle cx="64" cy="78" r="20" fill="url(#avatarGrad)"/>
+    <text x="64" y="83" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="700" text-anchor="middle">SC</text>
+    <circle cx="78" cy="90" r="5" fill="#10B981" stroke="#121212" stroke-width="1.5"/>
+
+    <text x="96" y="73" fill="#FFFFFF" font-family="sans-serif" font-size="16" font-weight="700">Sarah Connor</text>
+    <text x="96" y="90" fill="#10B981" font-family="sans-serif" font-size="12" font-weight="500">Active now</text>
+
+    <!-- Voice Call Button (LiveKit SFU) -->
+    <circle cx="320" cy="78" r="17" fill="#1A1A1A"/>
+    <path d="M315 74 C315 79 319 83 324 83 L325 81 C325 80 324 80 324 79 L322 79 C321 79 321 79 321 80 L319 81 C317 80 316 78 315 76 L316 75 C317 75 317 74 317 74 L316 72 C316 71 315 71 315 71 L313 72 C312 73 313 75 315 74 Z" fill="#0084FF" transform="scale(1.1) translate(-27, -9)"/>
+
+    <!-- Video Call Button (LiveKit SFU) -->
+    <circle cx="364" cy="78" r="17" fill="#1A1A1A"/>
+    <rect x="354" y="72" width="13" height="12" rx="2.5" fill="#E1306C"/>
+    <path d="M368 75 L374 72 L374 84 L368 81 Z" fill="#E1306C"/>
+
+    <!-- Menu -->
+    <circle cx="398" cy="73" r="2" fill="#A0A0A0"/>
+    <circle cx="398" cy="78" r="2" fill="#A0A0A0"/>
+    <circle cx="398" cy="83" r="2" fill="#A0A0A0"/>
+  </g>
+
+  <!-- Date Chip -->
+  <rect x="175" y="124" width="70" height="22" rx="11" fill="#1A1A1A" stroke="#2A2A2A"/>
+  <text x="210" y="139" fill="#A0A0A0" font-family="sans-serif" font-size="11" font-weight="600" text-anchor="middle">TODAY</text>
+
+  <!-- Message 1 (Incoming): Sarah intro -->
+  <g id="msg1" transform="translate(16, 160)">
+    <rect x="0" y="0" width="310" height="60" rx="16" fill="#1C1C1E" filter="url(#msgShadow)"/>
+    <text x="14" y="24" fill="#FFFFFF" font-family="sans-serif" font-size="13.5">Hey Alex! Streaming the raw 4K footage</text>
+    <text x="14" y="44" fill="#FFFFFF" font-family="sans-serif" font-size="13.5">via our P2P DataChannel ($0 cost) 🚀</text>
+    <text x="295" y="52" fill="#666666" font-family="sans-serif" font-size="10" text-anchor="end">10:38 AM</text>
+  </g>
+
+  <!-- Message 2 (Incoming): 1 GB WebRTC P2P DataChannel Transfer Card -->
+  <g id="p2pCard" transform="translate(16, 232)">
+    <rect x="0" y="0" width="330" height="130" rx="18" fill="#141416" stroke="#2A2A2A" stroke-width="1.2" filter="url(#msgShadow)"/>
+    
+    <!-- File Icon & Name -->
+    <rect x="14" y="14" width="36" height="42" rx="8" fill="#0084FF" fill-opacity="0.15"/>
+    <path d="M26 24 L34 24 L38 28 L38 46 L26 46 Z" fill="none" stroke="#00C6FF" stroke-width="2"/>
+    <text x="60" y="30" fill="#FFFFFF" font-family="sans-serif" font-size="13.5" font-weight="700">footage_4k_master.tar</text>
+    <text x="60" y="48" fill="#00C6FF" font-family="sans-serif" font-size="11" font-weight="600">840.0 MB • WebRTC P2P DataChannel</text>
+
+    <!-- Transfer Progress Bar -->
+    <rect x="14" y="68" width="302" height="8" rx="4" fill="#242424"/>
+    <rect x="14" y="68" width="250" height="8" rx="4" fill="url(#p2pBar)"/>
+
+    <!-- Transfer Metrics -->
+    <text x="14" y="94" fill="#A0A0A0" font-family="sans-serif" font-size="11">688.8 MB / 840 MB (82%)</text>
+    <text x="316" y="94" fill="#38EF7D" font-family="sans-serif" font-size="11" font-weight="700" text-anchor="end">14.8 MB/s</text>
+
+    <!-- Checksum Verification Badge -->
+    <rect x="14" y="104" width="190" height="18" rx="9" fill="#1C1C1E"/>
+    <circle cx="23" cy="113" r="3" fill="#10B981"/>
+    <text x="30" y="117" fill="#A0A0A0" font-family="sans-serif" font-size="9.5">SHA-256: 4a9f...e102 (Live stream)</text>
+    <text x="316" y="117" fill="#666666" font-family="sans-serif" font-size="10" text-anchor="end">10:39 AM</text>
+  </g>
+
+  <!-- Message 3 (Outgoing): Alex Reply -->
+  <g id="msg3" transform="translate(104, 376)">
+    <rect x="0" y="0" width="300" height="74" rx="16" fill="url(#bubbleGrad)" filter="url(#msgShadow)"/>
+    <text x="14" y="24" fill="#FFFFFF" font-family="sans-serif" font-size="13.5">Flow control buffer stayed under 4 MB</text>
+    <text x="14" y="44" fill="#FFFFFF" font-family="sans-serif" font-size="13.5">perfectly. Zero server storage used! ⚡</text>
+    <text x="264" y="64" fill="#FFFFFF" fill-opacity="0.8" font-family="sans-serif" font-size="10">10:41 AM</text>
+    <text x="286" y="64" fill="#FFFFFF" font-family="sans-serif" font-size="11" font-weight="700">✓✓</text>
+
+    <!-- Floating Reaction Badge -->
+    <rect x="14" y="64" width="58" height="22" rx="11" fill="#1A1A1A" stroke="#2A2A2A"/>
+    <text x="22" y="79" font-size="12">❤️</text>
+    <text x="38" y="79" font-size="12">🔥</text>
+    <text x="56" y="78" fill="#FFFFFF" font-family="sans-serif" font-size="10" font-weight="700">2</text>
+  </g>
+
+  <!-- Message 4 (Incoming): View-Once Media Item -->
+  <g id="msg4" transform="translate(16, 474)">
+    <rect x="0" y="0" width="260" height="66" rx="16" fill="#1C1C1E" stroke="#E1306C" stroke-width="1.2" stroke-dasharray="4 2" filter="url(#msgShadow)"/>
+    <!-- View Once Badge Icon -->
+    <circle cx="32" cy="33" r="16" fill="#E1306C" fill-opacity="0.15"/>
+    <circle cx="32" cy="33" r="6" fill="none" stroke="#E1306C" stroke-width="2"/>
+    <circle cx="32" cy="33" r="2" fill="#E1306C"/>
+    <text x="56" y="28" fill="#FFFFFF" font-family="sans-serif" font-size="13" font-weight="700">1 Photo • View Once</text>
+    <text x="56" y="46" fill="#A0A0A0" font-family="sans-serif" font-size="11">Protected with FLAG_SECURE</text>
+    <text x="246" y="56" fill="#666666" font-family="sans-serif" font-size="10" text-anchor="end">10:42 AM</text>
+  </g>
+
+  <!-- Message 5 (Outgoing): Opened View-Once Status -->
+  <g id="msg5" transform="translate(180, 552)">
+    <rect x="0" y="0" width="224" height="48" rx="16" fill="#1A1A1A" stroke="#2A2A2A" stroke-width="1"/>
+    <!-- Opened Pill Icon -->
+    <circle cx="24" cy="24" r="10" fill="#2E2E2E"/>
+    <circle cx="24" cy="24" r="4" fill="none" stroke="#666666" stroke-width="1.5"/>
+    <text x="44" y="28" fill="#A0A0A0" font-family="sans-serif" font-size="13" font-weight="600">Opened</text>
+    <text x="188" y="38" fill="#666666" font-family="sans-serif" font-size="10">10:43 AM</text>
+    <text x="210" y="38" fill="#0084FF" font-family="sans-serif" font-size="11">✓✓</text>
+  </g>
+
+  <!-- Floating Audio Call Minibar / PiP Trigger Indicator -->
+  <g id="callPill" transform="translate(16, 620)">
+    <rect x="0" y="0" width="388" height="44" rx="22" fill="#121212" stroke="#2A2A2A"/>
+    <circle cx="24" cy="22" r="12" fill="#10B981"/>
+    <path d="M20 19 C20 23 23 26 27 26 L28 25 L26 23 L25 24 C23 23 22 22 21 20 L22 19 L20 17 Z" fill="#FFFFFF"/>
+    <text x="46" y="26" fill="#FFFFFF" font-family="sans-serif" font-size="12" font-weight="600">Active LiveKit Voice Call • 04:12</text>
+    <rect x="312" y="11" width="64" height="22" rx="11" fill="#1A1A1A" stroke="#38A9FF"/>
+    <text x="344" y="25" fill="#38A9FF" font-family="sans-serif" font-size="10" font-weight="700" text-anchor="middle">PiP MODE</text>
+  </g>
+
+  <!-- Bottom Message Composer -->
+  <g id="composer" transform="translate(0, 680)">
+    <rect x="0" y="0" width="420" height="180" fill="#121212" stroke="#1E1E1E" stroke-width="1"/>
+
+    <!-- Input Bar Row -->
+    <g transform="translate(14, 16)">
+      <!-- Attach Button (+) -->
+      <circle cx="20" cy="24" r="18" fill="#1A1A1A" stroke="#2A2A2A"/>
+      <path d="M20 16 L20 32 M12 24 L28 24" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+
+      <!-- Text Input Field -->
+      <rect x="48" y="4" width="248" height="40" rx="20" fill="#1E1E1E" stroke="#2A2A2A"/>
+      <text x="64" y="28" fill="#666666" font-family="sans-serif" font-size="13.5">Type a message or 1 GB file...</text>
+
+      <!-- View Once Toggle (Active) -->
+      <g transform="translate(262, 14)">
+        <circle cx="14" cy="10" r="10" fill="#E1306C" fill-opacity="0.2" stroke="#E1306C" stroke-width="1.5"/>
+        <text x="14" y="14" fill="#E1306C" font-family="sans-serif" font-size="11" font-weight="800" text-anchor="middle">1</text>
+      </g>
+
+      <!-- Send / Mic Button -->
+      <circle cx="342" cy="24" r="22" fill="url(#bubbleGrad)" filter="url(#msgShadow)"/>
+      <path d="M336 24 L348 18 L344 24 L348 30 Z" fill="#FFFFFF"/>
+    </g>
+
+    <!-- Quick Action Chips (Stickers, GIF, 1GB WebRTC Transfer, View-Once) -->
+    <g transform="translate(16, 76)">
+      <rect x="0" y="0" width="92" height="26" rx="13" fill="#1A1A1A" stroke="#2A2A2A"/>
+      <text x="46" y="17" fill="#A0A0A0" font-family="sans-serif" font-size="11" font-weight="600" text-anchor="middle">⚡ P2P 1 GB</text>
+
+      <rect x="100" y="0" width="76" height="26" rx="13" fill="#1A1A1A" stroke="#2A2A2A"/>
+      <text x="138" y="17" fill="#A0A0A0" font-family="sans-serif" font-size="11" font-weight="600" text-anchor="middle">🔒 View Once</text>
+
+      <rect x="184" y="0" width="64" height="26" rx="13" fill="#1A1A1A" stroke="#2A2A2A"/>
+      <text x="216" y="17" fill="#A0A0A0" font-family="sans-serif" font-size="11" font-weight="600" text-anchor="middle">Stickers</text>
+
+      <rect x="256" y="0" width="56" height="26" rx="13" fill="#1A1A1A" stroke="#2A2A2A"/>
+      <text x="284" y="17" fill="#A0A0A0" font-family="sans-serif" font-size="11" font-weight="600" text-anchor="middle">GIFs</text>
+    </g>
+  </g>
+</svg>

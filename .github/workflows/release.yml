@@ -1,0 +1,87 @@
+name: Release Messenger APK & Monorepo Validation
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  validate-and-release:
+    name: Build Android APK & Publish Release
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node Dependencies
+        run: npm ci || npm install
+
+      - name: Run Monorepo Contract & Verification Tests
+        run: npm test
+
+      - name: Verify Web PWA TypeScript & Production Build
+        run: |
+          npm run --prefix apps/web typecheck
+          npm run --prefix apps/web build
+
+      - name: Grant Execute Permission for gradlew
+        run: chmod +x apps/android/gradlew
+
+      - name: Run Android Unit Tests
+        run: |
+          cd apps/android
+          ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Assemble Android Production/Debug APK
+        run: |
+          cd apps/android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK for Release Artifact
+        run: |
+          cp apps/android/app/build/outputs/apk/debug/app-debug.apk messenger-${{ github.ref_name }}.apk
+
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }} - Messenger Native Android & Web PWA
+          files: |
+            messenger-${{ github.ref_name }}.apk
+            apps/android/app/build/outputs/apk/debug/app-debug.apk
+          draft: false
+          prerelease: false
+          body: |
+            ## Messenger Monorepo Production Release ${{ github.ref_name }}
+            
+            A complete, zero-cost ($0/month) multiplatform private messenger featuring the native Android APK as the primary application and an installable Web PWA.
+            
+            ### Included Release Assets
+            - `messenger-${{ github.ref_name }}.apk`: Production-ready Android APK (minSdk 26, targetSdk 35)
+            
+            ### Release Highlights
+            - **Google Sign-In & Auth Access Gate**: Enforced across both Android & Web. Unauthenticated access strictly blocked.
+            - **User Profile View**: Display name, bio, and avatar customization with clean Sign Out and zero unrequested block controls.
+            - **View-Once Media Permanence**: Ephemeral media (photos, videos, text) locked permanently to "Opened" with `FLAG_SECURE` window protection.
+            - **Android In-App Update Engine**: Automated GitHub Releases / Supabase checks with strict debug suppression.
+            - **1 GB P2P Large File Engine**: Direct sender-to-receiver chunked binary transfer ($0 cloud storage & bandwidth cost).
+            - **LiveKit Cloud SFU Calling**: High-definition Opus audio & VP8/H.264 video with Telecom API incoming call lock-screen alerts.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,16 @@
+{
+  "name": "private-messenger-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "test": "node scripts/verify-e2e.js",
+    "test:e2e": "node scripts/verify-e2e.js",
+    "web:dev": "npm --workspace=apps/web run dev",
+    "web:build": "npm --workspace=apps/web run build",
+    "web:typecheck": "npm --workspace=apps/web run typecheck",
+    "web:lint": "npm --workspace=apps/web run lint"
+  }
+}
