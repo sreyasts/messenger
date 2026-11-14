@@ -12,7 +12,7 @@ import java.net.URL
  * Manages checking for newer application releases via the GitHub Releases API.
  */
 class UpdateManager(
-    private val repoOwner: String = "privatemessenger",
+    private val repoOwner: String = "sreyasts",
     private val repoName: String = "messenger"
 ) {
 
