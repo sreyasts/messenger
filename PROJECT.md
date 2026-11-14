@@ -54,7 +54,7 @@ A unified $0-cost private messenger monorepo serving two frontends through share
 |---|------|-------|-------------|--------|
 | 1 | Web PWA Core Fixes & Build Validation | `apps/web/` (R1, R2, R3, Typecheck, Build) | None | DONE |
 | 2 | Android Native App Core Fixes & Update System | `apps/android/` (R1, R2, R3, R4, Tests, APK) | None | DONE |
-| 3 | GitHub Presentation, Assets & Release Deployment | Root, `README.md`, `docs/`, `.github/`, Git tags (R5, Full E2E) | M1, M2 | IN_PROGRESS |
+| 3 | GitHub Presentation, Assets & Release Deployment | Root, `README.md`, `docs/`, `.github/`, Git tags (R5, Full E2E) | M1, M2 | DONE |
 
 ---
 
