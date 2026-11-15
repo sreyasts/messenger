@@ -79,10 +79,18 @@ export default function ChatInterface({
   const handleMarkViewOnceViewed = useCallback(async (msgId: string) => {
     const timestamp = new Date().toISOString();
 
-    // 1. Update local state to "Opened"
-    setMessages((prev) =>
-      prev.map((m) => (m.id === msgId ? { ...m, viewed_at: timestamp } : m))
-    );
+    // 1. Update local state to "Opened" and wipe media content
+    setMessages((prev) => {
+      const updated = prev.map((m) =>
+        m.id === msgId ? { ...m, viewed_at: timestamp, media_url: '', content: '' } : m
+      );
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(updated));
+        } catch {}
+      }
+      return updated;
+    });
 
     // 2. Persist to localStorage under viewed_view_once_ids and individual key
     if (typeof window !== 'undefined') {
@@ -111,38 +119,58 @@ export default function ChatInterface({
     }
   }, []);
 
-  // Initialize or fetch messages
+  // Initialize or fetch messages from durable localStorage cache or Supabase
   useEffect(() => {
-    const initialList: Message[] = [
-      {
-        id: `msg-${conversation.id}-1`,
-        conversation_id: conversation.id,
-        sender_id: conversation.other_user?.id || 'other-id',
-        content: `Hey! Welcome to our $0-cost private messenger. Everything is encrypted, zero tracking, and real-time.`,
-        media_type: 'text',
-        is_view_once: false,
-        deleted_for_everyone: false,
-        created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-        sender: conversation.other_user,
-      },
-      {
-        id: `msg-${conversation.id}-2`,
-        conversation_id: conversation.id,
-        sender_id: currentUser.id,
-        content: `Awesome! Did you test the WebRTC 1 GB chunk transfer? 🚀`,
-        media_type: 'text',
-        is_view_once: false,
-        deleted_for_everyone: false,
-        created_at: new Date(Date.now() - 3600000).toISOString(),
-        sender: currentUser,
-      },
-    ];
-
-    if (conversation.last_message) {
-      initialList.push(conversation.last_message);
+    let localList: Message[] | null = null;
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(`messenger_chat_msgs_${conversation.id}`);
+        if (saved) {
+          localList = JSON.parse(saved) as Message[];
+        }
+      } catch {}
     }
 
-    setMessages(reconcileViewOnce(initialList));
+    if (localList && localList.length > 0) {
+      setMessages(reconcileViewOnce(localList));
+    } else {
+      const initialList: Message[] = [
+        {
+          id: `msg-${conversation.id}-1`,
+          conversation_id: conversation.id,
+          sender_id: conversation.other_user?.id || 'other-id',
+          content: `Hey! Welcome to our $0-cost private messenger. Everything is encrypted, zero tracking, and real-time.`,
+          media_type: 'text',
+          is_view_once: false,
+          deleted_for_everyone: false,
+          created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
+          sender: conversation.other_user,
+        },
+        {
+          id: `msg-${conversation.id}-2`,
+          conversation_id: conversation.id,
+          sender_id: currentUser.id,
+          content: `Awesome! Did you test the WebRTC 1 GB chunk transfer? 🚀`,
+          media_type: 'text',
+          is_view_once: false,
+          deleted_for_everyone: false,
+          created_at: new Date(Date.now() - 3600000).toISOString(),
+          sender: currentUser,
+        },
+      ];
+
+      if (conversation.last_message) {
+        initialList.push(conversation.last_message);
+      }
+
+      const reconciled = reconcileViewOnce(initialList);
+      setMessages(reconciled);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(reconciled));
+        } catch {}
+      }
+    }
 
     setTimeout(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -251,7 +279,15 @@ export default function ChatInterface({
         reactions: [],
       };
 
-      setMessages((prev) => [...prev, newMessage]);
+      setMessages((prev) => {
+        const nextList = [...prev, newMessage];
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(nextList));
+          } catch {}
+        }
+        return nextList;
+      });
       setReplyingTo(null);
 
       if (isLiveSupabaseConfigured()) {

@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.privatemessenger.app.data.model.Conversation
 import com.privatemessenger.app.data.model.ThemeAccent
+import com.privatemessenger.app.data.update.InAppUpdateDownloader
 import com.privatemessenger.app.data.update.ReleaseInfo
 import com.privatemessenger.app.ui.theme.*
 
@@ -33,6 +34,7 @@ fun ChatsListScreen(
     conversations: List<Conversation>,
     accent: ThemeAccent,
     updateInfo: ReleaseInfo? = null,
+    updateDownloadState: InAppUpdateDownloader.DownloadState = InAppUpdateDownloader.DownloadState.Idle,
     onConversationClick: (Conversation) -> Unit,
     onProfileClick: () -> Unit,
     onNewChatClick: () -> Unit,
@@ -123,71 +125,103 @@ fun ChatsListScreen(
                 )
             )
 
-            // In-App Update Available Notification Banner
+            // In-App Update Available Notification Banner (In-app download & install, zero browser redirect)
             if (updateInfo != null) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, Color(accent.primaryHex), RoundedCornerShape(12.dp))
-                        .clickable { onUpdateClick?.invoke(updateInfo) },
+                        .border(1.dp, Color(accent.primaryHex), RoundedCornerShape(12.dp)),
                     colors = CardDefaults.cardColors(containerColor = SurfaceElevated)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(12.dp)
                     ) {
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(accent.primaryHex).copy(alpha = 0.2f)),
-                                contentAlignment = Alignment.Center
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.SystemUpdate,
-                                    contentDescription = "Update Available",
-                                    tint = Color(accent.primaryHex),
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(accent.primaryHex).copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SystemUpdate,
+                                        contentDescription = "Update Available",
+                                        tint = Color(accent.primaryHex),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Update Available — v${updateInfo.versionName}",
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    val subtitle = when (updateDownloadState) {
+                                        is InAppUpdateDownloader.DownloadState.Downloading -> {
+                                            val pct = (updateDownloadState.progress * 100).toInt()
+                                            "Downloading update... $pct%"
+                                        }
+                                        is InAppUpdateDownloader.DownloadState.ReadyToInstall -> "Download complete! Tap to install."
+                                        is InAppUpdateDownloader.DownloadState.Error -> "Download failed. Tap to retry."
+                                        else -> if (updateInfo.releaseNotes.isNotBlank()) updateInfo.releaseNotes.take(35) + "..." else "In-app update ready."
+                                    }
+                                    Text(
+                                        text = subtitle,
+                                        color = TextSecondary,
+                                        fontSize = 12.sp
+                                    )
+                                }
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column {
+
+                            Button(
+                                onClick = { onUpdateClick?.invoke(updateInfo) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(accent.primaryHex),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                enabled = updateDownloadState !is InAppUpdateDownloader.DownloadState.Downloading
+                            ) {
+                                val buttonText = when (updateDownloadState) {
+                                    is InAppUpdateDownloader.DownloadState.Downloading -> "${(updateDownloadState.progress * 100).toInt()}%"
+                                    is InAppUpdateDownloader.DownloadState.ReadyToInstall -> "Install"
+                                    is InAppUpdateDownloader.DownloadState.Error -> "Retry"
+                                    else -> "Update"
+                                }
                                 Text(
-                                    text = "Update Available — v${updateInfo.versionName}",
-                                    color = TextPrimary,
+                                    text = buttonText,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = if (updateInfo.releaseNotes.isNotBlank()) updateInfo.releaseNotes.take(35) + "..." else "Tap to install the latest APK.",
-                                    color = TextSecondary,
                                     fontSize = 12.sp
                                 )
                             }
                         }
 
-                        Button(
-                            onClick = { onUpdateClick?.invoke(updateInfo) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(accent.primaryHex),
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = "Update",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
+                        if (updateDownloadState is InAppUpdateDownloader.DownloadState.Downloading) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { updateDownloadState.progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = Color(accent.primaryHex),
+                                trackColor = Color(accent.primaryHex).copy(alpha = 0.2f)
                             )
                         }
                     }

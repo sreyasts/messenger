@@ -15,9 +15,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.privatemessenger.app.data.auth.AuthSessionManager
 import com.privatemessenger.app.data.model.*
+import com.privatemessenger.app.data.storage.MessageStorage
 import com.privatemessenger.app.data.storage.ViewOnceStorage
+import com.privatemessenger.app.data.update.InAppUpdateDownloader
 import com.privatemessenger.app.data.update.ReleaseInfo
 import com.privatemessenger.app.data.update.UpdateManager
+import kotlinx.coroutines.launch
 import com.privatemessenger.app.ui.components.LiveKitCallOverlay
 import com.privatemessenger.app.ui.components.ViewOnceMediaDialog
 import com.privatemessenger.app.ui.screens.AuthScreen
@@ -49,7 +52,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             val authSessionManager = remember { AuthSessionManager(applicationContext) }
             val viewOnceStorage = remember { ViewOnceStorage(applicationContext) }
+            val messageStorage = remember { MessageStorage(applicationContext) }
             val updateManager = remember { UpdateManager() }
+            val coroutineScope = rememberCoroutineScope()
 
             var isAuthenticated by remember { mutableStateOf(authSessionManager.isAuthenticated()) }
             var currentUser by remember {
@@ -68,6 +73,9 @@ class MainActivity : ComponentActivity() {
             var activeWallpaper by remember { mutableStateOf("") }
             var activeViewOnceMessage by remember { mutableStateOf<Message?>(null) }
             var availableUpdate by remember { mutableStateOf<ReleaseInfo?>(null) }
+            var updateDownloadState by remember {
+                mutableStateOf<InAppUpdateDownloader.DownloadState>(InAppUpdateDownloader.DownloadState.Idle)
+            }
 
             // Check for in-app updates (pure UpdatePolicy suppresses on debug builds)
             LaunchedEffect(Unit) {
@@ -115,11 +123,10 @@ class MainActivity : ComponentActivity() {
                 )
             }
 
-            // Messages for selected conversation with persistent View-Once state restoration
-            val initialMessages = remember {
+            // Seed initial conversation messages in durable MessageStorage if empty
+            LaunchedEffect(Unit) {
                 val sampleViewOnceId = "msg-2"
-                val isSampleViewed = viewOnceStorage.isViewed(sampleViewOnceId)
-                listOf(
+                val defaultConv1 = listOf(
                     Message(
                         id = "msg-1",
                         conversationId = "conv-1",
@@ -135,7 +142,7 @@ class MainActivity : ComponentActivity() {
                         senderName = "Alex Friend",
                         content = "Here is the sample View Once photo. Tap to open!",
                         isViewOnce = true,
-                        viewedAt = if (isSampleViewed) "Opened" else null,
+                        viewedAt = if (viewOnceStorage.isViewed(sampleViewOnceId)) "Opened" else null,
                         createdAt = "10:15"
                     ),
                     Message(
@@ -153,8 +160,32 @@ class MainActivity : ComponentActivity() {
                         )
                     )
                 )
+                messageStorage.seedIfEmpty("conv-1", defaultConv1, viewOnceStorage)
+
+                val defaultConv2 = listOf(
+                    Message(
+                        id = "msg-c2-1",
+                        conversationId = "conv-2",
+                        senderId = "user-sarah",
+                        senderName = "Sarah Jenkins",
+                        content = "WebRTC 1 GB chunk transfer completed with SHA-256 integrity!",
+                        createdAt = "11:20"
+                    )
+                )
+                messageStorage.seedIfEmpty("conv-2", defaultConv2, viewOnceStorage)
             }
-            val messages = remember { mutableStateListOf(*initialMessages.toTypedArray()) }
+
+            // Dynamic messages for the active conversation backed by durable storage
+            val currentConversationMessages = remember { mutableStateListOf<Message>() }
+
+            // Whenever active conversation changes, reload its messages from storage
+            LaunchedEffect(selectedConversation?.id) {
+                currentConversationMessages.clear()
+                selectedConversation?.let { conv ->
+                    val stored = messageStorage.getMessages(conv.id, viewOnceStorage)
+                    currentConversationMessages.addAll(stored)
+                }
+            }
 
             val stickerPacks = remember {
                 mutableStateListOf(
@@ -203,6 +234,7 @@ class MainActivity : ComponentActivity() {
                                 conversations = conversations,
                                 accent = activeThemeAccent,
                                 updateInfo = availableUpdate,
+                                updateDownloadState = updateDownloadState,
                                 onConversationClick = { conv ->
                                     selectedConversation = conv
                                     currentScreen = CurrentScreen.CHAT_DETAIL
@@ -223,9 +255,37 @@ class MainActivity : ComponentActivity() {
                                     currentScreen = CurrentScreen.CHAT_DETAIL
                                 },
                                 onUpdateClick = { release ->
-                                    if (release.downloadUrl.isNotBlank()) {
-                                        val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(release.downloadUrl))
-                                        startActivity(browserIntent)
+                                    if (updateDownloadState is InAppUpdateDownloader.DownloadState.ReadyToInstall) {
+                                        val apkFile = (updateDownloadState as InAppUpdateDownloader.DownloadState.ReadyToInstall).apkFile
+                                        if (InAppUpdateDownloader.canRequestPackageInstalls(this@MainActivity)) {
+                                            InAppUpdateDownloader.installApk(this@MainActivity, apkFile)
+                                        } else {
+                                            InAppUpdateDownloader.openUnknownAppSourcesSettings(this@MainActivity)
+                                        }
+                                    } else {
+                                        coroutineScope.launch {
+                                            updateDownloadState = InAppUpdateDownloader.DownloadState.Downloading(0f, 0L, 0L)
+                                            val result = InAppUpdateDownloader.downloadApk(
+                                                context = this@MainActivity,
+                                                downloadUrl = release.downloadUrl,
+                                                onProgress = { progress, downloaded, total ->
+                                                    updateDownloadState = InAppUpdateDownloader.DownloadState.Downloading(progress, downloaded, total)
+                                                }
+                                            )
+                                            result.fold(
+                                                onSuccess = { file ->
+                                                    updateDownloadState = InAppUpdateDownloader.DownloadState.ReadyToInstall(file)
+                                                    if (InAppUpdateDownloader.canRequestPackageInstalls(this@MainActivity)) {
+                                                        InAppUpdateDownloader.installApk(this@MainActivity, file)
+                                                    } else {
+                                                        InAppUpdateDownloader.openUnknownAppSourcesSettings(this@MainActivity)
+                                                    }
+                                                },
+                                                onFailure = { error ->
+                                                    updateDownloadState = InAppUpdateDownloader.DownloadState.Error(error.localizedMessage ?: "Download failed")
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             )
@@ -234,10 +294,11 @@ class MainActivity : ComponentActivity() {
                         currentScreen == CurrentScreen.CHAT_DETAIL && selectedConversation != null -> {
                             ChatDetailScreen(
                                 conversation = selectedConversation!!,
-                                messages = messages,
+                                messages = currentConversationMessages,
                                 currentUserId = currentUser.id,
                                 accent = activeThemeAccent,
                                 onBack = { currentScreen = CurrentScreen.CHATS_LIST },
+                                isViewOnceViewed = { id -> viewOnceStorage.isViewed(id) },
                                 onSendMessage = { text, replyTo, isViewOnce ->
                                     val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                                     val newMsg = Message(
@@ -251,7 +312,8 @@ class MainActivity : ComponentActivity() {
                                         replyToContent = replyTo?.content,
                                         createdAt = time
                                     )
-                                    messages.add(newMsg)
+                                    currentConversationMessages.add(newMsg)
+                                    messageStorage.saveMessage(newMsg, viewOnceStorage)
                                 },
                                 onSendFile = { fileName, fileSize, isP2p ->
                                     val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
@@ -264,7 +326,8 @@ class MainActivity : ComponentActivity() {
                                         fileSize = fileSize,
                                         createdAt = time
                                     )
-                                    messages.add(newMsg)
+                                    currentConversationMessages.add(newMsg)
+                                    messageStorage.saveMessage(newMsg, viewOnceStorage)
                                 },
                                 onVoiceCall = {
                                     activeCallState.value = Call(
@@ -294,17 +357,19 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onDeleteForEveryone = { msg ->
-                                    val idx = messages.indexOfFirst { it.id == msg.id }
+                                    val idx = currentConversationMessages.indexOfFirst { it.id == msg.id }
                                     if (idx != -1) {
-                                        messages[idx] = messages[idx].copy(deletedForEveryone = true)
+                                        currentConversationMessages[idx] = currentConversationMessages[idx].copy(deletedForEveryone = true)
+                                        messageStorage.saveMessage(currentConversationMessages[idx], viewOnceStorage)
                                     }
                                 },
                                 onAddReaction = { msg, emoji ->
-                                    val idx = messages.indexOfFirst { it.id == msg.id }
+                                    val idx = currentConversationMessages.indexOfFirst { it.id == msg.id }
                                     if (idx != -1) {
-                                        val existingReactions = messages[idx].reactions.toMutableList()
+                                        val existingReactions = currentConversationMessages[idx].reactions.toMutableList()
                                         existingReactions.add(Reaction(messageId = msg.id, userId = currentUser.id, emoji = emoji))
-                                        messages[idx] = messages[idx].copy(reactions = existingReactions)
+                                        currentConversationMessages[idx] = currentConversationMessages[idx].copy(reactions = existingReactions)
+                                        messageStorage.saveMessage(currentConversationMessages[idx], viewOnceStorage)
                                     }
                                 }
                             )
@@ -317,10 +382,13 @@ class MainActivity : ComponentActivity() {
                                     onMediaViewed = { msgId ->
                                         // Persist viewed status permanently in SharedPreferences
                                         viewOnceStorage.markAsViewed(msgId)
-                                        val idx = messages.indexOfFirst { it.id == msgId }
+                                        selectedConversation?.let { conv ->
+                                            messageStorage.markViewOnceOpened(conv.id, msgId, viewOnceStorage)
+                                        }
+                                        val idx = currentConversationMessages.indexOfFirst { it.id == msgId }
                                         if (idx != -1) {
                                             val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                                            messages[idx] = messages[idx].copy(viewedAt = time)
+                                            currentConversationMessages[idx] = currentConversationMessages[idx].copy(viewedAt = time, content = "")
                                         }
                                     }
                                 )

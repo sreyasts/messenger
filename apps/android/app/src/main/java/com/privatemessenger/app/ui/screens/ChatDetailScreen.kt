@@ -52,6 +52,7 @@ fun ChatDetailScreen(
     onVoiceCall: () -> Unit,
     onVideoCall: () -> Unit,
     onContactProfileClick: () -> Unit,
+    isViewOnceViewed: ((String) -> Boolean)? = null,
     onOpenViewOnce: (Message) -> Unit,
     onDeleteForEveryone: (Message) -> Unit,
     onAddReaction: (Message, String) -> Unit
@@ -332,6 +333,7 @@ fun ChatDetailScreen(
                         message = msg,
                         isFromMe = msg.senderId == currentUserId,
                         accent = accent,
+                        isViewOnceViewed = isViewOnceViewed,
                         onSwipeToReply = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             replyingTo = msg
@@ -547,6 +549,7 @@ fun MessageBubbleItem(
     message: Message,
     isFromMe: Boolean,
     accent: ThemeAccent,
+    isViewOnceViewed: ((String) -> Boolean)? = null,
     onSwipeToReply: () -> Unit,
     onLongPress: () -> Unit,
     onOpenViewOnce: () -> Unit,
@@ -594,7 +597,8 @@ fun MessageBubbleItem(
                 modifier = Modifier.combinedClickable(
                     onLongClick = onLongPress,
                     onClick = {
-                        if (message.isViewOnce && message.viewedAt == null) {
+                        val isAlreadyViewed = message.viewedAt != null || isViewOnceViewed?.invoke(message.id) == true
+                        if (message.isViewOnce && !isAlreadyViewed) {
                             onOpenViewOnce()
                         }
                     }
@@ -647,7 +651,7 @@ fun MessageBubbleItem(
                         }
                     } else if (message.isViewOnce) {
                         // View Once Media
-                        val isOpened = message.viewedAt != null
+                        val isOpened = message.viewedAt != null || isViewOnceViewed?.invoke(message.id) == true
                         val label = if (isOpened) {
                             "Opened"
                         } else {

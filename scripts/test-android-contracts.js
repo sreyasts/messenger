@@ -73,6 +73,21 @@ test('Tier 1 & 2: Android Manifest & Gradle Verification (Physical or Scaffold C
       assert.match(gradle, /minSdk\s*=\s*26/);
       assert.match(gradle, /targetSdk\s*=\s*35/);
     });
+
+    await t.test('AndroidManifest.xml contains REQUEST_INSTALL_PACKAGES and FileProvider for in-app updates', () => {
+      assert.ok(manifest.includes('android.permission.REQUEST_INSTALL_PACKAGES'), 'Missing REQUEST_INSTALL_PACKAGES permission');
+      assert.ok(manifest.includes('androidx.core.content.FileProvider'), 'Missing FileProvider declaration in AndroidManifest');
+      assert.ok(manifest.includes('${applicationId}.fileprovider'), 'Missing authority ${applicationId}.fileprovider');
+      const filePathsXml = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'res', 'xml', 'file_paths.xml');
+      assert.ok(fs.existsSync(filePathsXml), 'file_paths.xml must exist in res/xml');
+    });
+
+    await t.test('InAppUpdateDownloader and MessageStorage exist and provide durable persistence', () => {
+      const downloaderPath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'update', 'InAppUpdateDownloader.kt');
+      const storagePath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'storage', 'MessageStorage.kt');
+      assert.ok(fs.existsSync(downloaderPath), 'InAppUpdateDownloader.kt must exist');
+      assert.ok(fs.existsSync(storagePath), 'MessageStorage.kt must exist');
+    });
   } else {
     await t.test('Android scaffold contract requirements validator', () => {
       // Validate the formal schema rules that M3 must implement
