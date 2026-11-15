@@ -47,7 +47,11 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
 
         // Persist demo session to localStorage so refreshes keep user signed in
         if (typeof window !== 'undefined') {
-          localStorage.setItem('messenger_demo_session', JSON.stringify(simulatedUser));
+          try {
+            localStorage.setItem('messenger_demo_session', JSON.stringify(simulatedUser));
+          } catch (e) {
+            console.warn('Failed to persist demo session to localStorage:', e);
+          }
         }
 
         if (onDemoSignIn) {

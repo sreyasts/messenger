@@ -9,7 +9,23 @@ data class ReleaseInfo(
     val downloadUrl: String,
     val releaseNotes: String = "",
     val publishedAt: String = ""
-)
+) {
+    var fileSize: Long = 0L
+    var isPrerelease: Boolean = false
+
+    constructor(
+        versionCode: Int,
+        versionName: String,
+        downloadUrl: String,
+        releaseNotes: String = "",
+        publishedAt: String = "",
+        fileSize: Long = 0L,
+        isPrerelease: Boolean = false
+    ) : this(versionCode, versionName, downloadUrl, releaseNotes, publishedAt) {
+        this.fileSize = fileSize
+        this.isPrerelease = isPrerelease
+    }
+}
 
 /**
  * Pure functional policy determining whether an in-app update prompt or button
@@ -20,11 +36,13 @@ object UpdatePolicy {
     /**
      * Evaluates update eligibility.
      *
-     * CRITICAL RULE:
-     * - If [isDebugBuild] is true, returns false ALWAYS. This strictly suppresses
-     *   the update button on all test, debug, and development builds.
+     * RULES:
+     * - If [isDebugBuild] is true, returns false. This strictly suppresses
+     *   the update prompt on development test builds.
      * - If [remoteRelease] is null, returns false.
+     * - If [remoteRelease].isPrerelease is true, returns false.
      * - If [remoteRelease].versionCode > [currentVersionCode], returns true.
+     * - If [remoteRelease].versionName is newer than [currentVersionName], returns true.
      * - Otherwise, returns false.
      */
     fun shouldShowUpdate(
@@ -42,6 +60,34 @@ object UpdatePolicy {
             return false
         }
 
-        return remoteRelease.versionCode > currentVersionCode
+        if (remoteRelease.isPrerelease) {
+            return false
+        }
+
+        if (remoteRelease.versionCode > currentVersionCode) {
+            return true
+        }
+
+        return isVersionNewer(remoteRelease.versionName, currentVersionName)
+    }
+
+    /**
+     * Compares two semantic version strings (e.g. "1.0.1" vs "1.0.0").
+     */
+    fun isVersionNewer(remote: String, current: String): Boolean {
+        val cleanRemote = remote.removePrefix("v").substringBefore("-").trim()
+        val cleanCurrent = current.removePrefix("v").substringBefore("-").trim()
+
+        val remoteParts = cleanRemote.split(".").mapNotNull { it.filter { c -> c.isDigit() }.toIntOrNull() }
+        val currentParts = cleanCurrent.split(".").mapNotNull { it.filter { c -> c.isDigit() }.toIntOrNull() }
+
+        val maxLen = maxOf(remoteParts.size, currentParts.size)
+        for (i in 0 until maxLen) {
+            val r = remoteParts.getOrElse(i) { 0 }
+            val c = currentParts.getOrElse(i) { 0 }
+            if (r > c) return true
+            if (r < c) return false
+        }
+        return false
     }
 }

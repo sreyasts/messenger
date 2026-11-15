@@ -15,6 +15,8 @@ import com.privatemessenger.app.data.model.Call
 object CallNotificationManager {
     const val CHANNEL_ID_CALLS = "calls_channel"
     const val NOTIFICATION_ID_CALL = 1001
+    const val NOTIFICATION_ID_INCOMING_CALL = 1001
+    const val NOTIFICATION_ID_ACTIVE_CALL = 1002
 
     fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -109,11 +111,17 @@ object CallNotificationManager {
         }
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(NOTIFICATION_ID_CALL, builder.build())
+        notificationManager.notify(NOTIFICATION_ID_INCOMING_CALL, builder.build())
+    }
+
+    fun dismissIncomingCallNotification(context: Context) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.cancel(NOTIFICATION_ID_INCOMING_CALL)
     }
 
     fun dismissCallNotification(context: Context) {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.cancel(NOTIFICATION_ID_CALL)
+        notificationManager.cancel(NOTIFICATION_ID_INCOMING_CALL)
+        notificationManager.cancel(NOTIFICATION_ID_ACTIVE_CALL)
     }
 }

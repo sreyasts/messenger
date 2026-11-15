@@ -81,6 +81,9 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
       setAvatarUrl(dataUrl);
       if (onUpdateUser) onUpdateUser({ avatar_url: dataUrl });
     };
+    reader.onerror = (err) => {
+      console.warn('Failed to read avatar file:', err);
+    };
     reader.readAsDataURL(file);
   };
 
@@ -160,6 +163,10 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
           };
         })
       );
+      setTargetPackForSticker(null);
+    };
+    reader.onerror = (err) => {
+      console.warn('Failed to read sticker file:', err);
       setTargetPackForSticker(null);
     };
     reader.readAsDataURL(file);

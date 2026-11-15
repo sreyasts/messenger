@@ -8,6 +8,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.privatemessenger.app.MainActivity
 
 class CallForegroundService : Service() {
@@ -15,22 +16,33 @@ class CallForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
+        if (intent == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val action = intent.action
         if (action == "ACTION_DECLINE_CALL") {
             CallNotificationManager.dismissCallNotification(this)
             stopSelf()
             return START_NOT_STICKY
         } else if (action == "ACTION_END_CALL") {
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            CallNotificationManager.dismissCallNotification(this)
             stopSelf()
             return START_NOT_STICKY
         }
 
-        val roomName = intent?.getStringExtra("ROOM_NAME") ?: "Call"
-        val callType = intent?.getStringExtra("CALL_TYPE") ?: "audio"
+        val roomName = intent.getStringExtra("ROOM_NAME") ?: "Call"
+        val callType = intent.getStringExtra("CALL_TYPE") ?: "audio"
 
         startForegroundServiceWithNotification(roomName, callType)
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        CallNotificationManager.dismissCallNotification(this)
     }
 
     private fun startForegroundServiceWithNotification(roomName: String, callType: String) {
@@ -68,12 +80,12 @@ class CallForegroundService : Service() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
-                CallNotificationManager.NOTIFICATION_ID_CALL,
+                CallNotificationManager.NOTIFICATION_ID_ACTIVE_CALL,
                 notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
             )
         } else {
-            startForeground(CallNotificationManager.NOTIFICATION_ID_CALL, notification)
+            startForeground(CallNotificationManager.NOTIFICATION_ID_ACTIVE_CALL, notification)
         }
     }
 }

@@ -73,6 +73,16 @@ fun ChatDetailScreen(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
 
+    LaunchedEffect(isRecordingAudio) {
+        if (isRecordingAudio) {
+            recordingSeconds = 0
+            while (isRecordingAudio) {
+                kotlinx.coroutines.delay(1000)
+                recordingSeconds++
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -302,7 +312,7 @@ fun ChatDetailScreen(
                                     recordingSeconds = 0
                                 } else {
                                     isRecordingAudio = true
-                                    recordingSeconds = 4
+                                    recordingSeconds = 0
                                 }
                             }
                         ) {
@@ -390,8 +400,8 @@ fun ChatDetailScreen(
                         // Action Options
                         TextButton(
                             onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Message", activeMsg.content))
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                clipboard?.setPrimaryClip(ClipData.newPlainText("Message", activeMsg.content))
                                 selectedMessageForMenu = null
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -401,9 +411,14 @@ fun ChatDetailScreen(
 
                         TextButton(
                             onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                val clip = clipboard.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
-                                inputText += clip
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                if (clipboard != null && clipboard.hasPrimaryClip()) {
+                                    val clipData = clipboard.primaryClip
+                                    if (clipData != null && clipData.itemCount > 0) {
+                                        val clip = clipData.getItemAt(0)?.coerceToText(context)?.toString() ?: ""
+                                        inputText += clip
+                                    }
+                                }
                                 selectedMessageForMenu = null
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -622,7 +637,7 @@ fun MessageBubbleItem(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = message.replyToContent,
+                                    text = message.replyToContent ?: "",
                                     color = TextSecondary,
                                     fontSize = 12.sp,
                                     maxLines = 1

@@ -478,7 +478,7 @@ export default function MessageBubble({
               isOutgoing ? 'text-white/70' : 'text-[#888888]'
             }`}
           >
-            <span>{formatTime(message.created_at)}</span>
+            <span suppressHydrationWarning>{formatTime(message.created_at)}</span>
             {isOutgoing && (
               <span className="flex items-center ml-0.5">
                 {message.viewed_at ? (

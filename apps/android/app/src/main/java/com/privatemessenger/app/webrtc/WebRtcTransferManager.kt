@@ -26,27 +26,45 @@ class WebRtcTransferManager {
     private var isCancelled: Boolean = false
 
     fun calculateSha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        FileInputStream(file).use { fis ->
-            val buffer = ByteArray(CHUNK_SIZE)
-            var bytesRead: Int
-            while (fis.read(buffer).also { bytesRead = it } != -1) {
-                digest.update(buffer, 0, bytesRead)
-            }
+        if (!file.exists() || !file.isFile || !file.canRead()) {
+            return ""
         }
-        val bytes = digest.digest()
-        return bytes.joinToString("") { "%02x".format(it) }
+        val digest = MessageDigest.getInstance("SHA-256")
+        try {
+            FileInputStream(file).use { fis ->
+                val buffer = ByteArray(CHUNK_SIZE)
+                var bytesRead: Int
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            val bytes = digest.digest()
+            return bytes.joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            return ""
+        }
     }
 
     suspend fun simulateChunkedStreaming(
         transfer: P2PTransfer,
         onProgress: (bytesSent: Long, percent: Int, speedBytesSec: Long) -> Unit
     ) {
+        val totalBytes = transfer.fileSize
+        if (totalBytes <= 0L) {
+            _transferState.value = transfer.copy(
+                status = P2PTransferStatus.COMPLETED,
+                bytesTransferred = 0L,
+                progressPercentage = 100,
+                speedBytesPerSec = 0L
+            )
+            onProgress(0L, 100, 0L)
+            return
+        }
+
         _transferState.value = transfer.copy(status = P2PTransferStatus.TRANSFERRING)
         isPaused = false
         isCancelled = false
 
-        val totalBytes = transfer.fileSize
         var sentBytes = 0L
         var lastTime = System.currentTimeMillis()
         var bytesSinceCheck = 0L
@@ -75,7 +93,7 @@ class WebRtcTransferManager {
                 lastTime = now
             }
 
-            val percentage = ((sentBytes.toDouble() / totalBytes) * 100).toInt()
+            val percentage = ((sentBytes.toDouble() / totalBytes) * 100).toInt().coerceIn(0, 100)
             onProgress(sentBytes, percentage, speed)
             _transferState.value = _transferState.value?.copy(
                 bytesTransferred = sentBytes,

@@ -165,8 +165,9 @@ fun ChatsListScreen(
                                 }
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
+                                    val sizeLabel = if (updateInfo.fileSize > 0L) " (${InAppUpdateDownloader.formatBytes(updateInfo.fileSize)})" else ""
                                     Text(
-                                        text = "Update Available — v${updateInfo.versionName}",
+                                        text = "Update Available — v${updateInfo.versionName}$sizeLabel",
                                         color = TextPrimary,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 14.sp
@@ -174,11 +175,14 @@ fun ChatsListScreen(
                                     val subtitle = when (updateDownloadState) {
                                         is InAppUpdateDownloader.DownloadState.Downloading -> {
                                             val pct = (updateDownloadState.progress * 100).toInt()
-                                            "Downloading update... $pct%"
+                                            val speed = InAppUpdateDownloader.formatSpeed(updateDownloadState.speedBytesPerSec)
+                                            val dl = InAppUpdateDownloader.formatBytes(updateDownloadState.downloadedBytes)
+                                            val total = if (updateDownloadState.totalBytes > 0L) InAppUpdateDownloader.formatBytes(updateDownloadState.totalBytes) else "17.4 MB"
+                                            "Downloading: $pct% ($dl / $total) • $speed"
                                         }
                                         is InAppUpdateDownloader.DownloadState.ReadyToInstall -> "Download complete! Tap to install."
                                         is InAppUpdateDownloader.DownloadState.Error -> "Download failed. Tap to retry."
-                                        else -> if (updateInfo.releaseNotes.isNotBlank()) updateInfo.releaseNotes.take(35) + "..." else "In-app update ready."
+                                        else -> if (updateInfo.releaseNotes.isNotBlank()) updateInfo.releaseNotes.take(35) + "..." else "Fast in-app update ready."
                                     }
                                     Text(
                                         text = subtitle,
@@ -270,7 +274,7 @@ fun ConversationItem(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = title.take(1).uppercase(),
+                    text = title.ifBlank { "F" }.take(1).uppercase(),
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 20.sp

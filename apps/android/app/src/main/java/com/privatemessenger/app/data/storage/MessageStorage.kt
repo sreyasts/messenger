@@ -57,12 +57,18 @@ class MessageStorage(context: Context) {
      */
     @Synchronized
     fun saveMessage(message: Message, viewOnceStorage: ViewOnceStorage) {
+        val isViewed = message.isViewOnce && (viewOnceStorage.isViewed(message.id) || message.viewedAt != null)
+        val sanitized = if (isViewed) {
+            message.copy(viewedAt = message.viewedAt ?: "Opened", content = "")
+        } else {
+            message
+        }
         val current = getMessages(message.conversationId, viewOnceStorage).toMutableList()
         val idx = current.indexOfFirst { it.id == message.id }
         if (idx != -1) {
-            current[idx] = message
+            current[idx] = sanitized
         } else {
-            current.add(message)
+            current.add(sanitized)
         }
         writeConversationMessages(message.conversationId, current)
     }
@@ -103,7 +109,7 @@ class MessageStorage(context: Context) {
             for (msg in list) {
                 array.put(messageToJson(msg))
             }
-            prefs.edit().putString(KEY_PREFIX_CONV + conversationId, array.toString()).apply()
+            prefs.edit().putString(KEY_PREFIX_CONV + conversationId, array.toString()).commit()
         } catch (_: Exception) {}
     }
 

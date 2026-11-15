@@ -22,13 +22,12 @@ export default function ViewOnceModal({
   const [progress, setProgress] = useState(100);
 
   useEffect(() => {
-    if (!isOpen || !message) return;
+    if (!isOpen || !message || message.viewed_at) return;
 
-    // Immediately trigger server audit update: viewed_at = NOW()
+    // Immediately trigger server audit update: viewed_at = NOW() (call once)
     if (onViewed) {
       onViewed(message.id);
-    }
-    if (onMarkAsViewed) {
+    } else if (onMarkAsViewed) {
       onMarkAsViewed(message.id);
     }
 
@@ -60,7 +59,7 @@ export default function ViewOnceModal({
     };
   }, [isOpen, message, onViewed, onMarkAsViewed, onClose]);
 
-  if (!isOpen || !message) return null;
+  if (!isOpen || !message || message.viewed_at) return null;
 
   return (
     <div

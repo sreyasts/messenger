@@ -25,7 +25,7 @@ class ViewOnceStorage(context: Context) {
     fun markAsViewed(messageId: String) {
         val currentSet = getViewedIds().toMutableSet()
         currentSet.add(messageId)
-        prefs.edit().putStringSet(KEY_VIEWED_MESSAGE_IDS, currentSet).apply()
+        prefs.edit().putStringSet(KEY_VIEWED_MESSAGE_IDS, currentSet).commit()
     }
 
     /**

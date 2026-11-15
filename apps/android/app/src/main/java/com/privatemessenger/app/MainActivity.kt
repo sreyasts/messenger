@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -20,6 +21,8 @@ import com.privatemessenger.app.data.storage.ViewOnceStorage
 import com.privatemessenger.app.data.update.InAppUpdateDownloader
 import com.privatemessenger.app.data.update.ReleaseInfo
 import com.privatemessenger.app.data.update.UpdateManager
+import com.privatemessenger.app.telecom.CallForegroundService
+import com.privatemessenger.app.telecom.CallNotificationManager
 import kotlinx.coroutines.launch
 import com.privatemessenger.app.ui.components.LiveKitCallOverlay
 import com.privatemessenger.app.ui.components.ViewOnceMediaDialog
@@ -48,6 +51,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         handleIncomingShareIntent(intent)
+        handleCallIntent(intent)
 
         setContent {
             val authSessionManager = remember { AuthSessionManager(applicationContext) }
@@ -77,14 +81,57 @@ class MainActivity : ComponentActivity() {
                 mutableStateOf<InAppUpdateDownloader.DownloadState>(InAppUpdateDownloader.DownloadState.Idle)
             }
 
-            // Check for in-app updates (pure UpdatePolicy suppresses on debug builds)
+            // Checks for in-app updates against GitHub Releases API
+            val triggerUpdateCheck: (Boolean) -> Unit = { force ->
+                coroutineScope.launch {
+                    val update = updateManager.checkForUpdate(
+                        currentVersionCode = BuildConfig.VERSION_CODE,
+                        currentVersionName = BuildConfig.VERSION_NAME,
+                        isDebugBuild = false,
+                        forceCheck = force
+                    )
+                    availableUpdate = update
+                }
+            }
+
             LaunchedEffect(Unit) {
-                val update = updateManager.checkForUpdate(
-                    currentVersionCode = BuildConfig.VERSION_CODE,
-                    currentVersionName = BuildConfig.VERSION_NAME,
-                    isDebugBuild = BuildConfig.DEBUG
-                )
-                availableUpdate = update
+                triggerUpdateCheck(false)
+            }
+
+            // Fast in-app APK download and direct package installation (zero browser redirection)
+            val startInAppDownloadAndInstall: (ReleaseInfo) -> Unit = { release ->
+                if (updateDownloadState is InAppUpdateDownloader.DownloadState.ReadyToInstall) {
+                    val apkFile = (updateDownloadState as InAppUpdateDownloader.DownloadState.ReadyToInstall).apkFile
+                    if (InAppUpdateDownloader.canRequestPackageInstalls(this@MainActivity)) {
+                        InAppUpdateDownloader.installApk(this@MainActivity, apkFile)
+                    } else {
+                        InAppUpdateDownloader.openUnknownAppSourcesSettings(this@MainActivity)
+                    }
+                } else {
+                    coroutineScope.launch {
+                        updateDownloadState = InAppUpdateDownloader.DownloadState.Downloading(0f, 0L, 0L, 0L)
+                        val result = InAppUpdateDownloader.downloadApk(
+                            context = this@MainActivity,
+                            downloadUrl = release.downloadUrl,
+                            onProgress = { progress, downloaded, total, speed ->
+                                updateDownloadState = InAppUpdateDownloader.DownloadState.Downloading(progress, downloaded, total, speed)
+                            }
+                        )
+                        result.fold(
+                            onSuccess = { file ->
+                                updateDownloadState = InAppUpdateDownloader.DownloadState.ReadyToInstall(file)
+                                if (InAppUpdateDownloader.canRequestPackageInstalls(this@MainActivity)) {
+                                    InAppUpdateDownloader.installApk(this@MainActivity, file)
+                                } else {
+                                    InAppUpdateDownloader.openUnknownAppSourcesSettings(this@MainActivity)
+                                }
+                            },
+                            onFailure = { error ->
+                                updateDownloadState = InAppUpdateDownloader.DownloadState.Error(error.localizedMessage ?: "Download failed")
+                            }
+                        )
+                    }
+                }
             }
 
             // Demo active conversations list
@@ -201,6 +248,26 @@ class MainActivity : ComponentActivity() {
             }
 
             PrivateMessengerTheme(accent = activeThemeAccent) {
+                BackHandler(
+                    enabled = (isAuthenticated && currentScreen != CurrentScreen.CHATS_LIST) || activeCallState.value != null || activeViewOnceMessage != null
+                ) {
+                    when {
+                        activeViewOnceMessage != null -> {
+                            activeViewOnceMessage = null
+                        }
+                        activeCallState.value != null -> {
+                            enterPipMode()
+                        }
+                        currentScreen == CurrentScreen.CHAT_DETAIL -> {
+                            currentScreen = CurrentScreen.CHATS_LIST
+                            selectedConversation = null
+                        }
+                        currentScreen == CurrentScreen.PROFILE -> {
+                            currentScreen = CurrentScreen.CHATS_LIST
+                        }
+                    }
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = OledBackground
@@ -210,7 +277,10 @@ class MainActivity : ComponentActivity() {
                         activeCallState.value != null -> {
                             LiveKitCallOverlay(
                                 call = activeCallState.value!!,
-                                onEndCall = { activeCallState.value = null },
+                                onEndCall = {
+                                    activeCallState.value = null
+                                    stopCallService()
+                                },
                                 onEnterPiP = { enterPipMode() }
                             )
                         }
@@ -254,40 +324,7 @@ class MainActivity : ComponentActivity() {
                                     selectedConversation = newConv
                                     currentScreen = CurrentScreen.CHAT_DETAIL
                                 },
-                                onUpdateClick = { release ->
-                                    if (updateDownloadState is InAppUpdateDownloader.DownloadState.ReadyToInstall) {
-                                        val apkFile = (updateDownloadState as InAppUpdateDownloader.DownloadState.ReadyToInstall).apkFile
-                                        if (InAppUpdateDownloader.canRequestPackageInstalls(this@MainActivity)) {
-                                            InAppUpdateDownloader.installApk(this@MainActivity, apkFile)
-                                        } else {
-                                            InAppUpdateDownloader.openUnknownAppSourcesSettings(this@MainActivity)
-                                        }
-                                    } else {
-                                        coroutineScope.launch {
-                                            updateDownloadState = InAppUpdateDownloader.DownloadState.Downloading(0f, 0L, 0L)
-                                            val result = InAppUpdateDownloader.downloadApk(
-                                                context = this@MainActivity,
-                                                downloadUrl = release.downloadUrl,
-                                                onProgress = { progress, downloaded, total ->
-                                                    updateDownloadState = InAppUpdateDownloader.DownloadState.Downloading(progress, downloaded, total)
-                                                }
-                                            )
-                                            result.fold(
-                                                onSuccess = { file ->
-                                                    updateDownloadState = InAppUpdateDownloader.DownloadState.ReadyToInstall(file)
-                                                    if (InAppUpdateDownloader.canRequestPackageInstalls(this@MainActivity)) {
-                                                        InAppUpdateDownloader.installApk(this@MainActivity, file)
-                                                    } else {
-                                                        InAppUpdateDownloader.openUnknownAppSourcesSettings(this@MainActivity)
-                                                    }
-                                                },
-                                                onFailure = { error ->
-                                                    updateDownloadState = InAppUpdateDownloader.DownloadState.Error(error.localizedMessage ?: "Download failed")
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
+                                onUpdateClick = startInAppDownloadAndInstall
                             )
                         }
 
@@ -297,7 +334,10 @@ class MainActivity : ComponentActivity() {
                                 messages = currentConversationMessages,
                                 currentUserId = currentUser.id,
                                 accent = activeThemeAccent,
-                                onBack = { currentScreen = CurrentScreen.CHATS_LIST },
+                                onBack = {
+                                    currentScreen = CurrentScreen.CHATS_LIST
+                                    selectedConversation = null
+                                },
                                 isViewOnceViewed = { id -> viewOnceStorage.isViewed(id) },
                                 onSendMessage = { text, replyTo, isViewOnce ->
                                     val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
@@ -330,22 +370,26 @@ class MainActivity : ComponentActivity() {
                                     messageStorage.saveMessage(newMsg, viewOnceStorage)
                                 },
                                 onVoiceCall = {
-                                    activeCallState.value = Call(
+                                    val newCall = Call(
                                         conversationId = selectedConversation!!.id,
                                         callerId = currentUser.id,
                                         callerName = selectedConversation!!.title ?: "Friend",
                                         callType = CallType.AUDIO,
                                         roomName = "room-${selectedConversation!!.id}"
                                     )
+                                    activeCallState.value = newCall
+                                    startCallService(newCall.roomName, newCall.callType.key)
                                 },
                                 onVideoCall = {
-                                    activeCallState.value = Call(
+                                    val newCall = Call(
                                         conversationId = selectedConversation!!.id,
                                         callerId = currentUser.id,
                                         callerName = selectedConversation!!.title ?: "Friend",
                                         callType = CallType.VIDEO,
                                         roomName = "room-${selectedConversation!!.id}"
                                     )
+                                    activeCallState.value = newCall
+                                    startCallService(newCall.roomName, newCall.callType.key)
                                 },
                                 onContactProfileClick = {
                                     // Header click opens conversation partner profile card
@@ -426,7 +470,11 @@ class MainActivity : ComponentActivity() {
                                     currentUser = User(id = "unauth", email = "", displayName = "Guest")
                                     selectedConversation = null
                                     currentScreen = CurrentScreen.AUTH
-                                }
+                                },
+                                updateInfo = availableUpdate,
+                                updateDownloadState = updateDownloadState,
+                                onCheckForUpdates = { triggerUpdateCheck(true) },
+                                onUpdateClick = startInAppDownloadAndInstall
                             )
                         }
                     }
@@ -437,26 +485,82 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIncomingShareIntent(intent)
+        handleCallIntent(intent)
+    }
+
+    private fun handleCallIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.action == "ACTION_ANSWER_CALL") {
+            val callId = intent.getStringExtra("CALL_ID") ?: UUID.randomUUID().toString()
+            val roomName = intent.getStringExtra("ROOM_NAME") ?: "room-active"
+            val callTypeStr = intent.getStringExtra("CALL_TYPE") ?: "audio"
+            val callType = if (callTypeStr.equals("video", ignoreCase = true)) CallType.VIDEO else CallType.AUDIO
+            val activeCall = Call(
+                id = callId,
+                conversationId = "conv-call",
+                callerId = "caller-partner",
+                callerName = "Friend",
+                callType = callType,
+                roomName = roomName
+            )
+            activeCallState.value = activeCall
+            startCallService(roomName, callTypeStr)
+            CallNotificationManager.dismissIncomingCallNotification(this)
+        }
+    }
+
+    private fun startCallService(roomName: String, callType: String) {
+        val serviceIntent = Intent(this, CallForegroundService::class.java).apply {
+            action = "ACTION_START_CALL"
+            putExtra("ROOM_NAME", roomName)
+            putExtra("CALL_TYPE", callType)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
+    }
+
+    private fun stopCallService() {
+        val stopIntent = Intent(this, CallForegroundService::class.java).apply {
+            action = "ACTION_END_CALL"
+        }
+        startService(stopIntent)
+        CallNotificationManager.dismissCallNotification(this)
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {
         if (intent == null) return
-        val action = intent.action
-        val type = intent.type
+        try {
+            val action = intent.action
+            val type = intent.type
 
-        if (Intent.ACTION_SEND == action && type != null) {
-            if ("text/plain" == type) {
-                val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-                // Shared text handled
-            } else {
-                val imageUri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
-                // Shared media URI handled
+            if (Intent.ACTION_SEND == action && type != null) {
+                if ("text/plain" == type) {
+                    val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                    // Shared text handled
+                } else {
+                    val imageUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+                    }
+                    // Shared media URI handled
+                }
+            } else if (Intent.ACTION_SEND_MULTIPLE == action && type != null) {
+                val imageUris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+                }
+                // Multiple shared files handled
             }
-        } else if (Intent.ACTION_SEND_MULTIPLE == action && type != null) {
-            val imageUris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
-            // Multiple shared files handled
-        }
+        } catch (_: Exception) {}
     }
 
     private fun enterPipMode() {

@@ -56,20 +56,27 @@ export default function ChatInterface({
     let cachedIds: string[] = [];
     if (typeof window !== 'undefined') {
       try {
-        cachedIds = JSON.parse(localStorage.getItem('viewed_view_once_ids') || '[]');
+        const raw = localStorage.getItem('viewed_view_once_ids');
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(parsed)) {
+          cachedIds = parsed;
+        }
       } catch {}
     }
 
     return msgList.map((msg) => {
-      if (msg.is_view_once && !msg.viewed_at) {
+      if (msg.is_view_once) {
         const isLocallyViewed =
+          !!msg.viewed_at ||
           cachedIds.includes(msg.id) ||
           (typeof window !== 'undefined' && !!localStorage.getItem(`view_once_opened_${msg.id}`));
         if (isLocallyViewed) {
           const savedTime =
+            msg.viewed_at ||
             (typeof window !== 'undefined' && localStorage.getItem(`view_once_opened_${msg.id}`)) ||
             new Date().toISOString();
-          return { ...msg, viewed_at: savedTime };
+          // Ensure media content is stripped once opened to prevent re-opening exploits
+          return { ...msg, viewed_at: savedTime, media_url: '', content: '' };
         }
       }
       return msg;
@@ -95,10 +102,12 @@ export default function ChatInterface({
     // 2. Persist to localStorage under viewed_view_once_ids and individual key
     if (typeof window !== 'undefined') {
       try {
-        const viewedIds = JSON.parse(localStorage.getItem('viewed_view_once_ids') || '[]');
-        if (!viewedIds.includes(msgId)) {
-          viewedIds.push(msgId);
-          localStorage.setItem('viewed_view_once_ids', JSON.stringify(viewedIds));
+        const raw = localStorage.getItem('viewed_view_once_ids');
+        const viewedIds = raw ? JSON.parse(raw) : [];
+        const safeIds = Array.isArray(viewedIds) ? viewedIds : [];
+        if (!safeIds.includes(msgId)) {
+          safeIds.push(msgId);
+          localStorage.setItem('viewed_view_once_ids', JSON.stringify(safeIds));
         }
         localStorage.setItem(`view_once_opened_${msgId}`, timestamp);
       } catch (e) {
@@ -117,7 +126,7 @@ export default function ChatInterface({
         console.error('Failed to update viewed_at in Supabase:', err);
       }
     }
-  }, []);
+  }, [conversation.id]);
 
   // Initialize or fetch messages from durable localStorage cache or Supabase
   useEffect(() => {
@@ -203,9 +212,34 @@ export default function ChatInterface({
           (payload: any) => {
             const newMsg = payload.new as Message;
             setMessages((prev) => {
+              // Direct ID duplicate check
               if (prev.some((m) => m.id === newMsg.id)) return prev;
+
               const reconciled = reconcileViewOnce([newMsg])[0];
-              return [...prev, reconciled];
+
+              // Reconcile optimistic message by sender, content & media type to prevent duplicate bubble
+              const optIndex = prev.findIndex(
+                (m) =>
+                  m.sender_id === newMsg.sender_id &&
+                  m.content === newMsg.content &&
+                  m.media_type === newMsg.media_type &&
+                  (m.id.startsWith('msg-local-') || m.id.startsWith('msg-'))
+              );
+
+              let nextList: Message[];
+              if (optIndex >= 0) {
+                nextList = [...prev];
+                nextList[optIndex] = reconciled;
+              } else {
+                nextList = [...prev, reconciled];
+              }
+
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(nextList));
+                } catch {}
+              }
+              return nextList;
             });
           }
         )
@@ -219,9 +253,16 @@ export default function ChatInterface({
           },
           (payload: any) => {
             const updatedMsg = payload.new as Message;
-            setMessages((prev) =>
-              prev.map((m) => (m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m))
-            );
+            setMessages((prev) => {
+              const reconciled = reconcileViewOnce([updatedMsg])[0];
+              const nextList = prev.map((m) => (m.id === updatedMsg.id ? { ...m, ...reconciled } : m));
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(nextList));
+                } catch {}
+              }
+              return nextList;
+            });
           }
         )
         .subscribe();
@@ -260,8 +301,14 @@ export default function ChatInterface({
       const resolvedIsViewOnce = payload.is_view_once !== undefined ? payload.is_view_once : !!payload.isViewOnce;
       const resolvedReplyToId = payload.reply_to_id || payload.replyToId || null;
 
+      // Generate consistent UUID matching PostgreSQL UUID schema
+      const clientMsgId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
       const newMessage: Message = {
-        id: `msg-local-${Date.now()}`,
+        id: clientMsgId,
         conversation_id: conversation.id,
         sender_id: currentUser.id,
         content: payload.content,
@@ -293,6 +340,7 @@ export default function ChatInterface({
       if (isLiveSupabaseConfigured()) {
         try {
           await supabase.from('messages').insert({
+            id: clientMsgId,
             conversation_id: conversation.id,
             sender_id: currentUser.id,
             content: payload.content,
@@ -375,70 +423,130 @@ export default function ChatInterface({
   }, [handleSendMessage]);
 
   // Handle Reactions
-  const handleAddReaction = useCallback((messageId: string, emoji: string) => {
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== messageId) return m;
-        const existingReactions = m.reactions || [];
-        const foundIndex = existingReactions.findIndex(
-          (r) => r.user_id === currentUser.id && r.emoji === emoji
-        );
+  const handleAddReaction = useCallback(
+    (messageId: string, emoji: string) => {
+      let isRemoving = false;
 
-        if (foundIndex >= 0) {
-          return {
-            ...m,
-            reactions: existingReactions.filter((_, i) => i !== foundIndex),
-          };
-        } else {
-          return {
-            ...m,
-            reactions: [
-              ...existingReactions,
-              {
-                id: `rx-${Date.now()}`,
+      setMessages((prev) => {
+        const nextList = prev.map((m) => {
+          if (m.id !== messageId) return m;
+          const existingReactions = m.reactions || [];
+          const foundIndex = existingReactions.findIndex(
+            (r) => r.user_id === currentUser.id && r.emoji === emoji
+          );
+
+          if (foundIndex >= 0) {
+            isRemoving = true;
+            return {
+              ...m,
+              reactions: existingReactions.filter((_, i) => i !== foundIndex),
+            };
+          } else {
+            isRemoving = false;
+            return {
+              ...m,
+              reactions: [
+                ...existingReactions,
+                {
+                  id: `rx-${Date.now()}`,
+                  message_id: messageId,
+                  user_id: currentUser.id,
+                  emoji,
+                  created_at: new Date().toISOString(),
+                },
+              ],
+            };
+          }
+        });
+
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(nextList));
+          } catch {}
+        }
+        return nextList;
+      });
+
+      if (isLiveSupabaseConfigured()) {
+        (async () => {
+          try {
+            if (isRemoving) {
+              await supabase.from('reactions').delete().match({
                 message_id: messageId,
                 user_id: currentUser.id,
                 emoji,
-                created_at: new Date().toISOString(),
-              },
-            ],
-          };
-        }
-      })
-    );
-  }, [currentUser.id]);
+              });
+            } else {
+              await supabase.from('reactions').insert({
+                message_id: messageId,
+                user_id: currentUser.id,
+                emoji,
+              });
+            }
+          } catch (err) {
+            console.error('Failed to sync reaction to Supabase:', err);
+          }
+        })();
+      }
+    },
+    [currentUser.id, conversation.id]
+  );
 
   // Handle Delete for Everyone (Soft Delete Audit)
-  const handleDeleteForEveryone = useCallback(async (messageId: string) => {
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === messageId
-          ? {
-              ...m,
+  const handleDeleteForEveryone = useCallback(
+    async (messageId: string) => {
+      setMessages((prev) => {
+        const nextList = prev.map((m) =>
+          m.id === messageId
+            ? {
+                ...m,
+                deleted_for_everyone: true,
+                deleted_at: new Date().toISOString(),
+                deleted_by: currentUser.id,
+              }
+            : m
+        );
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(nextList));
+          } catch {}
+        }
+        return nextList;
+      });
+
+      if (isLiveSupabaseConfigured()) {
+        try {
+          await supabase
+            .from('messages')
+            .update({
               deleted_for_everyone: true,
               deleted_at: new Date().toISOString(),
               deleted_by: currentUser.id,
-            }
-          : m
-      )
-    );
-
-    if (isLiveSupabaseConfigured()) {
-      await supabase
-        .from('messages')
-        .update({
-          deleted_for_everyone: true,
-          deleted_at: new Date().toISOString(),
-          deleted_by: currentUser.id,
-        })
-        .eq('id', messageId);
-    }
-  }, [currentUser.id]);
+            })
+            .eq('id', messageId);
+        } catch (err) {
+          console.error('Failed to soft delete for everyone in Supabase:', err);
+        }
+      }
+    },
+    [currentUser.id, conversation.id]
+  );
 
   // Handle Delete for Me
-  const handleDeleteForMe = useCallback((messageId: string) => {
-    setMessages((prev) => prev.filter((m) => m.id !== messageId));
-  }, []);
+  const handleDeleteForMe = useCallback(
+    (messageId: string) => {
+      setMessages((prev) => {
+        const nextList = prev.filter((m) => m.id !== messageId);
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`messenger_chat_msgs_${conversation.id}`, JSON.stringify(nextList));
+          } catch {}
+        }
+        return nextList;
+      });
+    },
+    [conversation.id]
+  );
 
   const displayName = conversation.title || conversation.other_user?.display_name || 'Chat';
   const avatarUrl = conversation.avatar_url || conversation.other_user?.avatar_url;
@@ -684,6 +792,22 @@ export default function ChatInterface({
           metadata={activeP2P.metadata}
           progress={activeP2P.progress}
           isSender={activeP2P.isSender}
+          onPause={() => {
+            setActiveP2P((prev) =>
+              prev ? { ...prev, progress: prev.progress ? { ...prev.progress, status: 'paused' } : null } : null
+            );
+          }}
+          onResume={() => {
+            setActiveP2P((prev) =>
+              prev ? { ...prev, progress: prev.progress ? { ...prev.progress, status: 'transferring' } : null } : null
+            );
+          }}
+          onCancel={() => {
+            setActiveP2P((prev) =>
+              prev ? { ...prev, progress: prev.progress ? { ...prev.progress, status: 'cancelled' } : null } : null
+            );
+            setTimeout(() => setActiveP2P(null), 300);
+          }}
         />
       )}
     </div>

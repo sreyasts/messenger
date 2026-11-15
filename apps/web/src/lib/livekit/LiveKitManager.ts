@@ -101,15 +101,34 @@ export class LiveKitCallManager {
     this.setupListeners();
 
     if (token) {
-      await this.room.connect(livekitUrl, token);
-      this.isConnected = true;
+      try {
+        await this.room.connect(livekitUrl, token);
+        this.isConnected = true;
 
-      // Enable local mic
-      await this.room.localParticipant.setMicrophoneEnabled(true);
+        // Enable local mic with error boundary
+        try {
+          await this.room.localParticipant.setMicrophoneEnabled(true);
+        } catch (micErr) {
+          console.warn('Microphone permission not granted or device unavailable:', micErr);
+          this.isMicMuted = true;
+        }
 
-      // Enable local camera if not audio-only
-      if (!config.audioOnly) {
-        await this.room.localParticipant.setCameraEnabled(true);
+        // Enable local camera if not audio-only with error boundary
+        if (!config.audioOnly) {
+          try {
+            await this.room.localParticipant.setCameraEnabled(true);
+          } catch (camErr) {
+            console.warn('Camera permission not granted or device unavailable:', camErr);
+            this.isCameraOff = true;
+          }
+        }
+      } catch (connErr) {
+        console.error('Failed to connect to LiveKit room:', connErr);
+        this.isConnected = false;
+        if (this.onCallEndedCallback) {
+          this.onCallEndedCallback();
+        }
+        throw connErr;
       }
     }
 
@@ -158,34 +177,55 @@ export class LiveKitCallManager {
   }
 
   public async toggleMicrophone(): Promise<boolean> {
-    if (!this.room) return false;
-    this.isMicMuted = !this.isMicMuted;
-    await this.room.localParticipant.setMicrophoneEnabled(!this.isMicMuted);
-    return !this.isMicMuted;
+    if (!this.room || !this.room.localParticipant) return false;
+    try {
+      this.isMicMuted = !this.isMicMuted;
+      await this.room.localParticipant.setMicrophoneEnabled(!this.isMicMuted);
+      return !this.isMicMuted;
+    } catch (err) {
+      console.warn('Failed to toggle microphone:', err);
+      return !this.isMicMuted;
+    }
   }
 
   public async toggleCamera(): Promise<boolean> {
-    if (!this.room) return false;
-    this.isCameraOff = !this.isCameraOff;
-    await this.room.localParticipant.setCameraEnabled(!this.isCameraOff);
-    return !this.isCameraOff;
+    if (!this.room || !this.room.localParticipant) return false;
+    try {
+      this.isCameraOff = !this.isCameraOff;
+      await this.room.localParticipant.setCameraEnabled(!this.isCameraOff);
+      return !this.isCameraOff;
+    } catch (err) {
+      console.warn('Failed to toggle camera:', err);
+      return !this.isCameraOff;
+    }
   }
 
   public async toggleScreenShare(): Promise<boolean> {
-    if (!this.room) return false;
-    this.isScreenSharing = !this.isScreenSharing;
-    await this.room.localParticipant.setScreenShareEnabled(this.isScreenSharing);
-    return this.isScreenSharing;
+    if (!this.room || !this.room.localParticipant) return false;
+    try {
+      this.isScreenSharing = !this.isScreenSharing;
+      await this.room.localParticipant.setScreenShareEnabled(this.isScreenSharing);
+      return this.isScreenSharing;
+    } catch (err) {
+      console.warn('Failed to toggle screen share:', err);
+      this.isScreenSharing = false;
+      return false;
+    }
   }
 
   public async endCall(): Promise<void> {
-    if (this.room) {
-      await this.room.disconnect();
+    try {
+      if (this.room) {
+        await this.room.disconnect();
+      }
+    } catch (err) {
+      console.warn('Error disconnecting from LiveKit room:', err);
+    } finally {
       this.room = null;
-    }
-    this.isConnected = false;
-    if (this.onCallEndedCallback) {
-      this.onCallEndedCallback();
+      this.isConnected = false;
+      if (this.onCallEndedCallback) {
+        this.onCallEndedCallback();
+      }
     }
   }
 

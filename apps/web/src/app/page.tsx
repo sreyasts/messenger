@@ -174,20 +174,49 @@ export default function MessengerHomePage() {
 
     async function checkAuthSession() {
       try {
-        // 1. Check live Supabase session if configured
+        // 1. Check live Supabase session if configured with token expiration protection
         if (isLiveSupabaseConfigured()) {
-          const { data: sessionData } = await supabase.auth.getSession();
-          if (sessionData?.session?.user) {
-            const authUser = sessionData.session.user;
-            const { data: profile } = await supabase
-              .from('users')
-              .select('*')
-              .eq('id', authUser.id)
-              .single();
+          const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+          let currentSession = sessionData?.session;
+
+          if (sessionError) {
+            console.warn('Error fetching Supabase session:', sessionError);
+          }
+
+          // Proactive token expiration handling: refresh if expired or within 60s of expiring
+          if (currentSession) {
+            const expiresAt = currentSession.expires_at || 0;
+            const isExpired = expiresAt * 1000 <= Date.now() + 60000;
+            if (isExpired) {
+              const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+              if (refreshError || !refreshData.session) {
+                console.warn('Session token refresh failed:', refreshError);
+                currentSession = null;
+              } else {
+                currentSession = refreshData.session;
+              }
+            }
+          }
+
+          if (currentSession?.user) {
+            const authUser = currentSession.user;
+            let profile: User | null = null;
+            try {
+              const { data, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', authUser.id)
+                .single();
+              if (!error && data) {
+                profile = data as User;
+              }
+            } catch (profileErr) {
+              console.warn('Profile fetch notice:', profileErr);
+            }
 
             if (isMounted) {
               if (profile) {
-                setCurrentUser(profile as User);
+                setCurrentUser(profile);
               } else {
                 setCurrentUser({
                   id: authUser.id,
@@ -219,11 +248,11 @@ export default function MessengerHomePage() {
 
         // 2. Check local demo session storage
         if (typeof window !== 'undefined') {
-          const cachedSession = localStorage.getItem('messenger_demo_session');
-          if (cachedSession) {
-            try {
+          try {
+            const cachedSession = localStorage.getItem('messenger_demo_session');
+            if (cachedSession) {
               const parsedUser = JSON.parse(cachedSession) as User;
-              if (parsedUser && parsedUser.id) {
+              if (parsedUser && typeof parsedUser === 'object' && parsedUser.id) {
                 if (isMounted) {
                   setCurrentUser(parsedUser);
                   setIsAuthenticated(true);
@@ -231,9 +260,9 @@ export default function MessengerHomePage() {
                   return;
                 }
               }
-            } catch (e) {
-              console.warn('Failed to parse cached session', e);
             }
+          } catch (e) {
+            console.warn('Failed to parse cached session', e);
           }
         }
 
@@ -258,46 +287,60 @@ export default function MessengerHomePage() {
     if (isLiveSupabaseConfigured()) {
       const { data: authListener } = supabase.auth.onAuthStateChange(
         async (event, session) => {
-          if (session?.user) {
-            const authUser = session.user;
-            const { data: profile } = await supabase
-              .from('users')
-              .select('*')
-              .eq('id', authUser.id)
-              .single();
-
-            if (isMounted) {
-              if (profile) {
-                setCurrentUser(profile as User);
-              } else {
-                setCurrentUser({
-                  id: authUser.id,
-                  email: authUser.email || '',
-                  display_name:
-                    authUser.user_metadata?.full_name ||
-                    authUser.user_metadata?.name ||
-                    authUser.email?.split('@')[0] ||
-                    'User',
-                  bio: '',
-                  avatar_url:
-                    authUser.user_metadata?.avatar_url ||
-                    authUser.user_metadata?.picture ||
-                    '',
-                  theme_accent: 'violet-pink',
-                  chat_background_url: '',
-                  role: 'user',
-                  is_banned: false,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                });
+          try {
+            if (session?.user) {
+              const authUser = session.user;
+              let profile: User | null = null;
+              try {
+                const { data } = await supabase
+                  .from('users')
+                  .select('*')
+                  .eq('id', authUser.id)
+                  .single();
+                if (data) profile = data as User;
+              } catch (fetchErr) {
+                console.warn('Failed to fetch profile on auth state change:', fetchErr);
               }
-              setIsAuthenticated(true);
-              setIsLoadingAuth(false);
+
+              if (isMounted) {
+                if (profile) {
+                  setCurrentUser(profile);
+                } else {
+                  setCurrentUser({
+                    id: authUser.id,
+                    email: authUser.email || '',
+                    display_name:
+                      authUser.user_metadata?.full_name ||
+                      authUser.user_metadata?.name ||
+                      authUser.email?.split('@')[0] ||
+                      'User',
+                    bio: '',
+                    avatar_url:
+                      authUser.user_metadata?.avatar_url ||
+                      authUser.user_metadata?.picture ||
+                      '',
+                    theme_accent: 'violet-pink',
+                    chat_background_url: '',
+                    role: 'user',
+                    is_banned: false,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                  });
+                }
+                setIsAuthenticated(true);
+                setIsLoadingAuth(false);
+              }
+            } else {
+              // SIGNED_OUT or session expired / invalidated
+              if (isMounted) {
+                setIsAuthenticated(false);
+                setCurrentUser(null);
+                setIsLoadingAuth(false);
+              }
             }
-          } else if (event === 'SIGNED_OUT') {
+          } catch (e) {
+            console.error('Error handling auth state change:', e);
             if (isMounted) {
-              setIsAuthenticated(false);
-              setCurrentUser(null);
               setIsLoadingAuth(false);
             }
           }
@@ -366,7 +409,10 @@ export default function MessengerHomePage() {
                     ...c,
                     last_message: newMsg,
                     updated_at: newMsg.created_at,
-                    unread_count: (c.unread_count || 0) + 1,
+                    unread_count:
+                      newMsg.sender_id === currentUser?.id
+                        ? c.unread_count || 0
+                        : (c.unread_count || 0) + 1,
                   }
                 : c
             )
@@ -410,8 +456,12 @@ export default function MessengerHomePage() {
 
   const handleSignOut = useCallback(async () => {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('messenger_demo_session');
-      localStorage.removeItem('messenger_session');
+      try {
+        localStorage.removeItem('messenger_demo_session');
+        localStorage.removeItem('messenger_session');
+      } catch (storageErr) {
+        console.warn('Error clearing localStorage on sign out:', storageErr);
+      }
     }
     if (isLiveSupabaseConfigured()) {
       try {

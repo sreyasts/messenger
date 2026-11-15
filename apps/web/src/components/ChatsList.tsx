@@ -259,7 +259,7 @@ export default function ChatsList({
                     <h3 className={`text-sm truncate ${conv.unread_count && conv.unread_count > 0 ? 'font-bold text-white' : 'font-medium text-white'}`}>
                       {displayName}
                     </h3>
-                    <span className="text-[11px] text-[#777777] ml-2 flex-shrink-0">
+                    <span suppressHydrationWarning className="text-[11px] text-[#777777] ml-2 flex-shrink-0">
                       {formatConversationTime(conv.last_message?.created_at || conv.updated_at)}
                     </span>
                   </div>

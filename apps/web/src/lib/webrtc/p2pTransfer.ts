@@ -77,7 +77,21 @@ export class P2PFileSender {
     this.dataChannel.bufferedAmountLowThreshold = BUFFER_LOW_WATERMARK;
 
     this.dataChannel.onopen = () => {
-      this.streamFile();
+      this.streamFile().catch((err) => {
+        console.error('Unhandled error during P2P file streaming:', err);
+        this.notifyProgress(this.currentOffset, 'failed', 0);
+        if (this.onProgressCallback) {
+          this.onProgressCallback({
+            transferId: this.metadata.transferId,
+            bytesTransferred: this.currentOffset,
+            totalBytes: this.file.size,
+            percentage: this.file.size > 0 ? Math.min(100, Math.round((this.currentOffset / this.file.size) * 100)) : 0,
+            speedBytesPerSec: 0,
+            status: 'failed',
+            errorMessage: err?.message || 'DataChannel streaming error',
+          });
+        }
+      });
     };
 
     const offer = await this.peerConnection.createOffer();
@@ -129,58 +143,94 @@ export class P2PFileSender {
     let bytesSinceLastSpeedCheck = 0;
     let currentSpeed = 0;
 
-    // Send header frame first
-    this.dataChannel.send(
-      JSON.stringify({
-        type: 'HEADER',
-        metadata: this.metadata,
-      })
-    );
+    try {
+      // Send header frame first
+      this.dataChannel.send(
+        JSON.stringify({
+          type: 'HEADER',
+          metadata: this.metadata,
+        })
+      );
 
-    while (this.currentOffset < totalBytes) {
-      if (this.isCancelled) return;
-
-      while (this.isPaused) {
-        await new Promise((res) => setTimeout(res, 200));
+      while (this.currentOffset < totalBytes) {
         if (this.isCancelled) return;
+
+        while (this.isPaused) {
+          await new Promise((res) => setTimeout(res, 200));
+          if (this.isCancelled) return;
+        }
+
+        // Backpressure control: Wait if buffer exceeds threshold with stall protection
+        if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
+          await new Promise<void>((resolve) => {
+            if (!this.dataChannel || this.dataChannel.readyState !== 'open' || this.isCancelled) {
+              return resolve();
+            }
+
+            let resolved = false;
+            let pollTimer: NodeJS.Timeout | null = null;
+            const cleanup = () => {
+              if (resolved) return;
+              resolved = true;
+              if (pollTimer) clearInterval(pollTimer);
+              if (this.dataChannel && this.dataChannel.onbufferedamountlow) {
+                this.dataChannel.onbufferedamountlow = null;
+              }
+              resolve();
+            };
+
+            this.dataChannel.onbufferedamountlow = () => {
+              cleanup();
+            };
+
+            // Safeguard against edge-trigger misses, sudden connection closes, or buffer stalls
+            pollTimer = setInterval(() => {
+              if (
+                !this.dataChannel ||
+                this.dataChannel.readyState !== 'open' ||
+                this.isCancelled ||
+                this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK
+              ) {
+                cleanup();
+              }
+            }, 50);
+          });
+        }
+
+        if (this.isCancelled || !this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+        const slice = this.file.slice(this.currentOffset, this.currentOffset + CHUNK_SIZE);
+        const buffer = await slice.arrayBuffer();
+        this.dataChannel.send(buffer);
+
+        this.currentOffset += buffer.byteLength;
+        bytesSinceLastSpeedCheck += buffer.byteLength;
+
+        if (this.isCancelled) return;
+
+        const now = performance.now();
+        const timeDiff = (now - lastTime) / 1000;
+        if (timeDiff >= 0.5) {
+          currentSpeed = bytesSinceLastSpeedCheck / timeDiff;
+          bytesSinceLastSpeedCheck = 0;
+          lastTime = now;
+        }
+
+        this.notifyProgress(this.currentOffset, 'transferring', currentSpeed);
       }
 
-      // Backpressure control: Wait if buffer exceeds threshold
-      if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
-        await new Promise<void>((resolve) => {
-          if (!this.dataChannel) return resolve();
-          this.dataChannel.onbufferedamountlow = () => {
-            if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
-            resolve();
-          };
-        });
+      if (this.isCancelled || !this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+      // Send EOF frame
+      this.dataChannel.send(JSON.stringify({ type: 'EOF', transferId: this.metadata.transferId }));
+      this.notifyProgress(totalBytes, 'completed', 0);
+    } catch (err: any) {
+      if (!this.isCancelled) {
+        console.error('P2P streamFile error:', err);
+        this.notifyProgress(this.currentOffset, 'failed', 0);
+        throw err;
       }
-
-      const slice = this.file.slice(this.currentOffset, this.currentOffset + CHUNK_SIZE);
-      const buffer = await slice.arrayBuffer();
-      this.dataChannel.send(buffer);
-
-      this.currentOffset += buffer.byteLength;
-      bytesSinceLastSpeedCheck += buffer.byteLength;
-
-      if (this.isCancelled) return;
-
-      const now = performance.now();
-      const timeDiff = (now - lastTime) / 1000;
-      if (timeDiff >= 0.5) {
-        currentSpeed = bytesSinceLastSpeedCheck / timeDiff;
-        bytesSinceLastSpeedCheck = 0;
-        lastTime = now;
-      }
-
-      this.notifyProgress(this.currentOffset, 'transferring', currentSpeed);
     }
-
-    if (this.isCancelled) return;
-
-    // Send EOF frame
-    this.dataChannel.send(JSON.stringify({ type: 'EOF', transferId: this.metadata.transferId }));
-    this.notifyProgress(totalBytes, 'completed', 0);
   }
 
   private notifyProgress(
@@ -277,55 +327,101 @@ export class P2PFileReceiver {
   }
 
   private async handleDataChannelMessage(event: MessageEvent): Promise<void> {
-    if (typeof event.data === 'string') {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'EOF') {
-          await this.finalizeFile();
+    try {
+      if (typeof event.data === 'string') {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'EOF') {
+            await this.finalizeFile();
+          }
+        } catch (err) {
+          console.warn('Received text frame in DataChannel:', event.data, err);
         }
-      } catch (err) {
-        console.warn('Received text frame in DataChannel:', event.data);
+        return;
       }
-      return;
-    }
 
-    const chunk = event.data as ArrayBuffer;
-    this.receivedChunks.push(chunk);
-    this.receivedBytes += chunk.byteLength;
+      const chunk = event.data as ArrayBuffer;
+      this.receivedChunks.push(chunk);
+      this.receivedBytes += chunk.byteLength;
 
-    if (this.metadata && this.onProgressCallback) {
-      const percentage =
-        this.metadata.fileSize > 0
-          ? Math.min(
-              100,
-              Math.round((this.receivedBytes / this.metadata.fileSize) * 100)
-            )
-          : 100;
-      this.onProgressCallback({
-        transferId: this.metadata.transferId,
-        bytesTransferred: this.receivedBytes,
-        totalBytes: this.metadata.fileSize,
-        percentage,
-        speedBytesPerSec: 0,
-        status: 'transferring',
-      });
+      if (this.metadata && this.onProgressCallback) {
+        const percentage =
+          this.metadata.fileSize > 0
+            ? Math.min(
+                100,
+                Math.round((this.receivedBytes / this.metadata.fileSize) * 100)
+              )
+            : 100;
+        this.onProgressCallback({
+          transferId: this.metadata.transferId,
+          bytesTransferred: this.receivedBytes,
+          totalBytes: this.metadata.fileSize,
+          percentage,
+          speedBytesPerSec: 0,
+          status: 'transferring',
+        });
+      }
+    } catch (err: any) {
+      console.error('Error handling DataChannel message:', err);
+      if (this.metadata && this.onProgressCallback) {
+        this.onProgressCallback({
+          transferId: this.metadata.transferId,
+          bytesTransferred: this.receivedBytes,
+          totalBytes: this.metadata.fileSize,
+          percentage: 0,
+          speedBytesPerSec: 0,
+          status: 'failed',
+          errorMessage: err?.message || 'DataChannel reception error',
+        });
+      }
     }
   }
 
   private async finalizeFile(): Promise<void> {
     if (!this.metadata) return;
 
-    const fileBlob = new Blob(this.receivedChunks, {
-      type: this.metadata.fileType || 'application/octet-stream',
-    });
+    try {
+      const fileBlob = new Blob(this.receivedChunks, {
+        type: this.metadata.fileType || 'application/octet-stream',
+      });
 
-    // Verify SHA-256 integrity
-    const arrayBuffer = await fileBlob.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const calculatedHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+      // Verify SHA-256 integrity
+      const arrayBuffer = await fileBlob.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const calculatedHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 
-    if (calculatedHash.toLowerCase() !== this.metadata.fileHashSha256.toLowerCase()) {
+      if (calculatedHash.toLowerCase() !== this.metadata.fileHashSha256.toLowerCase()) {
+        if (this.onProgressCallback) {
+          this.onProgressCallback({
+            transferId: this.metadata.transferId,
+            bytesTransferred: this.receivedBytes,
+            totalBytes: this.metadata.fileSize,
+            percentage: 100,
+            speedBytesPerSec: 0,
+            status: 'failed',
+            errorMessage: 'SHA-256 checksum mismatch. File integrity verification failed.',
+          });
+        }
+        return;
+      }
+
+      if (this.onProgressCallback) {
+        this.onProgressCallback({
+          transferId: this.metadata.transferId,
+          bytesTransferred: this.receivedBytes,
+          totalBytes: this.metadata.fileSize,
+          percentage: 100,
+          speedBytesPerSec: 0,
+          status: 'completed',
+        });
+      }
+
+      if (this.onCompleteCallback) {
+        this.onCompleteCallback(fileBlob, this.metadata);
+      }
+    } catch (err: any) {
+      console.error('Error finalizing P2P file:', err);
       if (this.onProgressCallback) {
         this.onProgressCallback({
           transferId: this.metadata.transferId,
@@ -334,25 +430,9 @@ export class P2PFileReceiver {
           percentage: 100,
           speedBytesPerSec: 0,
           status: 'failed',
-          errorMessage: 'SHA-256 checksum mismatch. File integrity verification failed.',
+          errorMessage: err?.message || 'File assembly failed',
         });
       }
-      return;
-    }
-
-    if (this.onProgressCallback) {
-      this.onProgressCallback({
-        transferId: this.metadata.transferId,
-        bytesTransferred: this.receivedBytes,
-        totalBytes: this.metadata.fileSize,
-        percentage: 100,
-        speedBytesPerSec: 0,
-        status: 'completed',
-      });
-    }
-
-    if (this.onCompleteCallback) {
-      this.onCompleteCallback(fileBlob, this.metadata);
     }
   }
 

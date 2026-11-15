@@ -78,24 +78,32 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [wallpaper, setWallpaperState] = useState<string>('');
 
   useEffect(() => {
-    const savedAccent = localStorage.getItem('messenger_accent') as ThemeAccent;
-    if (savedAccent && THEME_CONFIGS[savedAccent]) {
-      setAccentState(savedAccent);
-    }
-    const savedWallpaper = localStorage.getItem('messenger_wallpaper');
-    if (savedWallpaper) {
-      setWallpaperState(savedWallpaper);
+    try {
+      const savedAccent = localStorage.getItem('messenger_accent') as ThemeAccent;
+      if (savedAccent && THEME_CONFIGS[savedAccent]) {
+        setAccentState(savedAccent);
+      }
+      const savedWallpaper = localStorage.getItem('messenger_wallpaper');
+      if (savedWallpaper) {
+        setWallpaperState(savedWallpaper);
+      }
+    } catch (e) {
+      console.warn('Failed to read theme from localStorage:', e);
     }
   }, []);
 
   const setAccent = (newAccent: ThemeAccent) => {
     setAccentState(newAccent);
-    localStorage.setItem('messenger_accent', newAccent);
+    try {
+      localStorage.setItem('messenger_accent', newAccent);
+    } catch {}
   };
 
   const setWallpaper = (newWallpaper: string) => {
     setWallpaperState(newWallpaper);
-    localStorage.setItem('messenger_wallpaper', newWallpaper);
+    try {
+      localStorage.setItem('messenger_wallpaper', newWallpaper);
+    } catch {}
   };
 
   return (

@@ -20,23 +20,23 @@ class UpdateManager(
      * Checks if a new release is available and whether it should be shown
      * according to [UpdatePolicy].
      *
-     * @return [ReleaseInfo] if an update should be displayed to the user, or null if suppressed or up-to-date.
+     * @param currentVersionCode Current local version code (e.g. 1 or 10000).
+     * @param currentVersionName Current local version name (e.g. "1.0.0").
+     * @param isDebugBuild Whether running in an active debug test environment.
+     * @param forceCheck When true, bypasses policy version checks to allow testing or on-demand checks.
+     * @return [ReleaseInfo] if an update should be displayed to the user, or null if up-to-date.
      */
     suspend fun checkForUpdate(
         currentVersionCode: Int,
         currentVersionName: String,
-        isDebugBuild: Boolean
+        isDebugBuild: Boolean = false,
+        forceCheck: Boolean = false
     ): ReleaseInfo? = withContext(Dispatchers.IO) {
-        // Fast-path: if debug build, UpdatePolicy will suppress anyway
-        if (UpdatePolicy.shouldShowUpdate(currentVersionCode, currentVersionName, isDebugBuild, null)) {
-            // Cannot show without release
-            return@withContext null
-        }
-        if (isDebugBuild) {
-            return@withContext null
-        }
-
         val remoteRelease = fetchLatestRelease() ?: return@withContext null
+
+        if (forceCheck) {
+            return@withContext remoteRelease
+        }
 
         val shouldShow = UpdatePolicy.shouldShowUpdate(
             currentVersionCode = currentVersionCode,
@@ -58,8 +58,8 @@ class UpdateManager(
             val url = URL(apiUrl)
             connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
-            connection.connectTimeout = 5000
-            connection.readTimeout = 5000
+            connection.connectTimeout = 8000
+            connection.readTimeout = 8000
             connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
             connection.setRequestProperty("User-Agent", "PrivateMessenger-Android")
 
@@ -87,12 +87,14 @@ class UpdateManager(
             val tagName = json.optString("tag_name", "v1.0.0").removePrefix("v")
             val releaseNotes = json.optString("body", "")
             val publishedAt = json.optString("published_at", "")
+            val isPrerelease = json.optBoolean("prerelease", false)
 
-            // Parse version code from tag name (e.g. "1.1.0" -> 10100 or numeric extraction)
+            // Parse version code from tag name (e.g. "1.1.0" -> 10100)
             val versionCode = extractVersionCode(tagName)
 
-            // Look for APK download URL in assets
+            // Look for APK download URL and size in assets
             var apkDownloadUrl = ""
+            var apkFileSize = 0L
             val assets = json.optJSONArray("assets")
             if (assets != null) {
                 for (i in 0 until assets.length()) {
@@ -100,6 +102,7 @@ class UpdateManager(
                     val name = asset.optString("name", "")
                     if (name.endsWith(".apk", ignoreCase = true)) {
                         apkDownloadUrl = asset.optString("browser_download_url", "")
+                        apkFileSize = asset.optLong("size", 0L)
                         break
                     }
                 }
@@ -114,15 +117,18 @@ class UpdateManager(
                 versionName = tagName,
                 downloadUrl = apkDownloadUrl,
                 releaseNotes = releaseNotes,
-                publishedAt = publishedAt
+                publishedAt = publishedAt,
+                fileSize = apkFileSize,
+                isPrerelease = isPrerelease
             )
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun extractVersionCode(versionName: String): Int {
-        val parts = versionName.split(".").mapNotNull { it.filter { char -> char.isDigit() }.toIntOrNull() }
+    internal fun extractVersionCode(versionName: String): Int {
+        val cleanVersion = versionName.substringBefore("-").trim()
+        val parts = cleanVersion.split(".").mapNotNull { it.filter { char -> char.isDigit() }.toIntOrNull() }
         return when (parts.size) {
             3 -> parts[0] * 10000 + parts[1] * 100 + parts[2]
             2 -> parts[0] * 10000 + parts[1] * 100

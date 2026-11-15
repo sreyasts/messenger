@@ -1,9 +1,12 @@
 package com.privatemessenger.app
 
 import com.privatemessenger.app.data.model.*
+import com.privatemessenger.app.data.update.UpdateManager
 import com.privatemessenger.app.webrtc.WebRtcTransferManager
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
+import java.io.File
 
 class AndroidArchitectureTest {
 
@@ -106,5 +109,53 @@ class AndroidArchitectureTest {
         )
         assertEquals(100, completed.progressPercentage)
         assertEquals(P2PTransferStatus.COMPLETED, completed.status)
+    }
+
+    @Test
+    fun testWebRtcZeroByteFileTransferSafety() = runBlocking {
+        val manager = WebRtcTransferManager()
+        val zeroByteTransfer = P2PTransfer(
+            id = "zero-byte-1",
+            conversationId = "conv-1",
+            senderId = "user-1",
+            receiverId = "user-2",
+            fileName = "empty.txt",
+            fileSize = 0L,
+            fileType = "text/plain",
+            fileHashSha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+
+        var progressReported = -1
+        manager.simulateChunkedStreaming(zeroByteTransfer) { _, percent, _ ->
+            progressReported = percent
+        }
+
+        val finalState = manager.transferState.value
+        assertNotNull(finalState)
+        assertEquals(P2PTransferStatus.COMPLETED, finalState?.status)
+        assertEquals(100, finalState?.progressPercentage)
+        assertEquals(100, progressReported)
+    }
+
+    @Test
+    fun testWebRtcNonExistentFileSha256ReturnsEmpty() {
+        val manager = WebRtcTransferManager()
+        val nonExistent = File("non_existent_file_safeguard_${System.currentTimeMillis()}.tmp")
+        val hash = manager.calculateSha256(nonExistent)
+        assertEquals("", hash)
+    }
+
+    @Test
+    fun testUpdateManagerPreReleaseVersionCodeExtraction() {
+        val manager = UpdateManager()
+        // 1 * 10000 + 2 * 100 + 3 = 10203 (must not be contaminated by -beta1)
+        val betaCode = manager.extractVersionCode("1.2.3-beta1")
+        assertEquals(10203, betaCode)
+
+        val stableCode = manager.extractVersionCode("1.2.0")
+        assertEquals(10200, stableCode)
+
+        val rcCode = manager.extractVersionCode("2.0.0-rc2")
+        assertEquals(20000, rcCode)
     }
 }

@@ -24,6 +24,8 @@ import com.privatemessenger.app.data.model.Sticker
 import com.privatemessenger.app.data.model.StickerPack
 import com.privatemessenger.app.data.model.ThemeAccent
 import com.privatemessenger.app.data.model.User
+import com.privatemessenger.app.data.update.InAppUpdateDownloader
+import com.privatemessenger.app.data.update.ReleaseInfo
 import com.privatemessenger.app.ui.theme.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,7 +41,11 @@ fun ProfileScreen(
     onUpdateWallpaper: (String) -> Unit,
     onCreateStickerPack: (name: String) -> Unit,
     onDeleteStickerPack: (String) -> Unit,
-    onSignOut: () -> Unit = {}
+    onSignOut: () -> Unit = {},
+    updateInfo: ReleaseInfo? = null,
+    updateDownloadState: InAppUpdateDownloader.DownloadState = InAppUpdateDownloader.DownloadState.Idle,
+    onCheckForUpdates: () -> Unit = {},
+    onUpdateClick: ((ReleaseInfo) -> Unit)? = null
 ) {
     var displayName by remember { mutableStateOf(currentUser.displayName) }
     var bio by remember { mutableStateOf(currentUser.bio) }
@@ -119,7 +125,7 @@ fun ProfileScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = displayName.take(1).uppercase(),
+                                text = displayName.ifBlank { "U" }.take(1).uppercase(),
                                 color = Color.White,
                                 fontSize = 36.sp,
                                 fontWeight = FontWeight.Bold
@@ -314,6 +320,139 @@ fun ProfileScreen(
                                         )
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // App Updates & Version Section (Fast In-App Download, Zero Browser Redirection)
+            item {
+                Spacer(modifier = Modifier.height(28.dp))
+                Text(
+                    text = "App Updates & Version",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(SurfaceElevated)
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "Installed Version",
+                                color = TextSecondary,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                text = "v1.0.0 (Native Android APK)",
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                        }
+
+                        Button(
+                            onClick = onCheckForUpdates,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(accent.primaryHex),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Check for updates",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Check Updates", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (updateInfo != null) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(color = BorderDark)
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        val sizeLabel = if (updateInfo.fileSize > 0L) " (${InAppUpdateDownloader.formatBytes(updateInfo.fileSize)})" else ""
+                        Text(
+                            text = "New Update Available: v${updateInfo.versionName}$sizeLabel",
+                            color = Color(accent.primaryHex),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        if (updateInfo.releaseNotes.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = updateInfo.releaseNotes.take(120) + if (updateInfo.releaseNotes.length > 120) "..." else "",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (updateDownloadState is InAppUpdateDownloader.DownloadState.Downloading) {
+                            val pct = (updateDownloadState.progress * 100).toInt()
+                            val speed = InAppUpdateDownloader.formatSpeed(updateDownloadState.speedBytesPerSec)
+                            val dl = InAppUpdateDownloader.formatBytes(updateDownloadState.downloadedBytes)
+                            val total = if (updateDownloadState.totalBytes > 0L) InAppUpdateDownloader.formatBytes(updateDownloadState.totalBytes) else "17.4 MB"
+
+                            Text(
+                                text = "Downloading: $pct% ($dl / $total) • $speed",
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                progress = { updateDownloadState.progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp)),
+                                color = Color(accent.primaryHex),
+                                trackColor = Color(0xFF242424)
+                            )
+                        } else {
+                            Button(
+                                onClick = { onUpdateClick?.invoke(updateInfo) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(accent.primaryHex),
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                val label = when (updateDownloadState) {
+                                    is InAppUpdateDownloader.DownloadState.ReadyToInstall -> "Install Update Now"
+                                    is InAppUpdateDownloader.DownloadState.Error -> "Download Failed — Tap to Retry"
+                                    else -> "Fast In-App Download"
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = label,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = label,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
                             }
                         }
                     }
