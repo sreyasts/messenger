@@ -1,19 +1,17 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTheme } from '@/lib/theme/ThemeContext';
 import { supabase, isLiveSupabaseConfigured } from '@/lib/supabase/client';
-import { User, Conversation, Message, MediaType, ThemeAccent } from '@/types/database';
+import { User, Conversation, Message, ConversationParticipant, Call } from '@/types/database';
 import ChatsList from '@/components/ChatsList';
 import ChatInterface from '@/components/ChatInterface';
 import ProfilePage from '@/components/ProfilePage';
 import NewChatModal from '@/components/NewChatModal';
 import CallModal from '@/components/CallModal';
-import P2PTransferModal from '@/components/P2PTransferModal';
 import GoogleSignInGate from '@/components/GoogleSignInGate';
-import { MessageSquarePlus, Sparkles, Shield, Zap } from 'lucide-react';
+import { MessageSquarePlus, Shield, Zap } from 'lucide-react';
 
-// Default Mock Conversations for Initial / Demo State
 const INITIAL_MOCK_CONVERSATIONS: Conversation[] = [
   {
     id: 'conv-001',
@@ -72,9 +70,11 @@ const INITIAL_MOCK_CONVERSATIONS: Conversation[] = [
       id: 'msg-002',
       conversation_id: 'conv-002',
       sender_id: 'user-003',
-      content: 'Sent a View Once photo',
+      content: '',
       media_type: 'image',
       media_url: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800',
+      file_name: 'mountain_sunset.jpg',
+      file_size: 428190,
       is_view_once: true,
       viewed_at: null,
       deleted_for_everyone: false,
@@ -134,20 +134,33 @@ const INITIAL_MOCK_CONVERSATIONS: Conversation[] = [
   },
 ];
 
+function sortConversationsByLatest(list: Conversation[]): Conversation[] {
+  return [...list].sort((a, b) => {
+    const timeA = new Date(a.last_message?.created_at || a.updated_at || a.created_at).getTime();
+    const timeB = new Date(b.last_message?.created_at || b.updated_at || b.created_at).getTime();
+    return timeB - timeA;
+  });
+}
+
 export default function MessengerHomePage() {
   const { config } = useTheme();
 
   // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   // Navigation State
   const [activeScreen, setActiveScreen] = useState<'chats' | 'chat' | 'profile'>('chats');
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const activeConversationIdRef = useRef<string | null>(null);
+  activeConversationIdRef.current = activeConversationId;
 
   // Conversations State
-  const [conversations, setConversations] = useState<Conversation[]>(INITIAL_MOCK_CONVERSATIONS);
+  const [conversations, setConversations] = useState<Conversation[]>(
+    isLiveSupabaseConfigured() ? [] : INITIAL_MOCK_CONVERSATIONS
+  );
 
   // Modals State
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
@@ -155,26 +168,68 @@ export default function MessengerHomePage() {
     isOpen: boolean;
     callType: 'audio' | 'video';
     roomName: string;
+    conversationId: string;
+    callId?: string;
+    isIncoming?: boolean;
     participantIdentity: string;
     participantName: string;
     remoteParticipantName?: string;
     remoteParticipantAvatar?: string;
   } | null>(null);
-  const [activeP2PTransfer, setActiveP2PTransfer] = useState<{
-    isOpen: boolean;
-    fileName: string;
-    fileSize: number;
-    isSender: boolean;
-    progress: any;
-  } | null>(null);
+  const activeCallRef = useRef(activeCall);
+  activeCallRef.current = activeCall;
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
 
-  // Check auth session on mount
+  const buildFallbackUser = useCallback((authUser: any): User => {
+    return {
+      id: authUser.id,
+      email: authUser.email || '',
+      display_name:
+        authUser.user_metadata?.full_name ||
+        authUser.user_metadata?.name ||
+        authUser.email?.split('@')[0] ||
+        'User',
+      bio: '',
+      avatar_url:
+        authUser.user_metadata?.avatar_url ||
+        authUser.user_metadata?.picture ||
+        '',
+      theme_accent: 'violet-pink',
+      chat_background_url: '',
+      role: 'user',
+      is_banned: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }, []);
+
+  const resolveSupabaseUserProfile = useCallback(
+    async (authUser: any): Promise<User | null> => {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', authUser.id)
+          .single();
+        if (!error && data) {
+          return data as User;
+        }
+      } catch (err) {
+        console.warn('Profile fetch notice:', err);
+      }
+      return buildFallbackUser(authUser);
+    },
+    [buildFallbackUser]
+  );
+
+  // Check auth session on mount without duplicate concurrent profile queries
   useEffect(() => {
     let isMounted = true;
+    let initialResolved = false;
 
     async function checkAuthSession() {
       try {
-        // 1. Check live Supabase session if configured with token expiration protection
         if (isLiveSupabaseConfigured()) {
           const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
           let currentSession = sessionData?.session;
@@ -183,77 +238,40 @@ export default function MessengerHomePage() {
             console.warn('Error fetching Supabase session:', sessionError);
           }
 
-          // Proactive token expiration handling: refresh if expired or within 60s of expiring
           if (currentSession) {
             const expiresAt = currentSession.expires_at || 0;
-            const isExpired = expiresAt * 1000 <= Date.now() + 60000;
-            if (isExpired) {
+            if (expiresAt * 1000 <= Date.now() + 60000) {
               const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-              if (refreshError || !refreshData.session) {
-                console.warn('Session token refresh failed:', refreshError);
-                currentSession = null;
-              } else {
-                currentSession = refreshData.session;
-              }
+              currentSession = refreshError || !refreshData.session ? null : refreshData.session;
             }
           }
 
           if (currentSession?.user) {
-            const authUser = currentSession.user;
-            let profile: User | null = null;
-            try {
-              const { data, error } = await supabase
-                .from('users')
-                .select('*')
-                .eq('id', authUser.id)
-                .single();
-              if (!error && data) {
-                profile = data as User;
-              }
-            } catch (profileErr) {
-              console.warn('Profile fetch notice:', profileErr);
-            }
+            const profile = await resolveSupabaseUserProfile(currentSession.user);
+            if (!isMounted) return;
+            initialResolved = true;
 
-            if (isMounted) {
-              if (profile) {
-                setCurrentUser(profile);
-              } else {
-                setCurrentUser({
-                  id: authUser.id,
-                  email: authUser.email || '',
-                  display_name:
-                    authUser.user_metadata?.full_name ||
-                    authUser.user_metadata?.name ||
-                    authUser.email?.split('@')[0] ||
-                    'User',
-                  bio: '',
-                  avatar_url:
-                    authUser.user_metadata?.avatar_url ||
-                    authUser.user_metadata?.picture ||
-                    '',
-                  theme_accent: 'violet-pink',
-                  chat_background_url: '',
-                  role: 'user',
-                  is_banned: false,
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                });
-              }
+            if (profile?.is_banned) {
+              await supabase.auth.signOut().catch(() => {});
+              setAuthError('Your account has been suspended by an administrator.');
+              setIsAuthenticated(false);
+              setCurrentUser(null);
+            } else {
+              setAuthError(null);
+              setCurrentUser(profile);
               setIsAuthenticated(true);
-              setIsLoadingAuth(false);
-              return;
             }
+            setIsLoadingAuth(false);
+            return;
           }
-        }
-
-        // 2. Check local demo session storage
-        if (typeof window !== 'undefined') {
+        } else if (typeof window !== 'undefined') {
           try {
             const cachedSession = localStorage.getItem('messenger_demo_session');
             if (cachedSession) {
               const parsedUser = JSON.parse(cachedSession) as User;
               if (parsedUser && typeof parsedUser === 'object' && parsedUser.id) {
                 if (isMounted) {
+                  initialResolved = true;
                   setCurrentUser(parsedUser);
                   setIsAuthenticated(true);
                   setIsLoadingAuth(false);
@@ -266,8 +284,8 @@ export default function MessengerHomePage() {
           }
         }
 
-        // 3. Not authenticated
-        if (isMounted) {
+        if (isMounted && !initialResolved) {
+          initialResolved = true;
           setIsAuthenticated(false);
           setCurrentUser(null);
           setIsLoadingAuth(false);
@@ -283,140 +301,168 @@ export default function MessengerHomePage() {
 
     checkAuthSession();
 
-    // Listen to Supabase auth state changes
     if (isLiveSupabaseConfigured()) {
-      const { data: authListener } = supabase.auth.onAuthStateChange(
-        async (event, session) => {
-          try {
-            if (session?.user) {
-              const authUser = session.user;
-              let profile: User | null = null;
-              try {
-                const { data } = await supabase
-                  .from('users')
-                  .select('*')
-                  .eq('id', authUser.id)
-                  .single();
-                if (data) profile = data as User;
-              } catch (fetchErr) {
-                console.warn('Failed to fetch profile on auth state change:', fetchErr);
-              }
+      const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (!isMounted) return;
+        // Skip duplicate INITIAL_SESSION if checkAuthSession already handled it
+        if (event === 'INITIAL_SESSION' && initialResolved) return;
 
-              if (isMounted) {
-                if (profile) {
-                  setCurrentUser(profile);
-                } else {
-                  setCurrentUser({
-                    id: authUser.id,
-                    email: authUser.email || '',
-                    display_name:
-                      authUser.user_metadata?.full_name ||
-                      authUser.user_metadata?.name ||
-                      authUser.email?.split('@')[0] ||
-                      'User',
-                    bio: '',
-                    avatar_url:
-                      authUser.user_metadata?.avatar_url ||
-                      authUser.user_metadata?.picture ||
-                      '',
-                    theme_accent: 'violet-pink',
-                    chat_background_url: '',
-                    role: 'user',
-                    is_banned: false,
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString(),
-                  });
-                }
-                setIsAuthenticated(true);
-                setIsLoadingAuth(false);
-              }
-            } else {
-              // SIGNED_OUT or session expired / invalidated
-              if (isMounted) {
-                setIsAuthenticated(false);
-                setCurrentUser(null);
-                setIsLoadingAuth(false);
-              }
-            }
-          } catch (e) {
-            console.error('Error handling auth state change:', e);
-            if (isMounted) {
-              setIsLoadingAuth(false);
-            }
+        if (session?.user) {
+          const profile = await resolveSupabaseUserProfile(session.user);
+          if (!isMounted) return;
+          if (profile?.is_banned) {
+            await supabase.auth.signOut().catch(() => {});
+            setAuthError('Your account has been suspended by an administrator.');
+            setIsAuthenticated(false);
+            setCurrentUser(null);
+          } else {
+            setAuthError(null);
+            setCurrentUser(profile);
+            setIsAuthenticated(true);
           }
+          setIsLoadingAuth(false);
+        } else {
+          setIsAuthenticated(false);
+          setCurrentUser(null);
+          setIsLoadingAuth(false);
         }
-      );
+      });
 
       return () => {
         isMounted = false;
         authListener?.subscription?.unsubscribe();
       };
-    } else {
-      return () => {
-        isMounted = false;
-      };
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [resolveSupabaseUserProfile]);
+
+  // Load conversations with participants (other_user), last_message, and unread counts
+  const loadSupabaseConversations = useCallback(async (userId: string) => {
+    try {
+      const { data: myPartRows, error: partError } = await supabase
+        .from('conversation_participants')
+        .select('conversation_id, last_read_at, conversation:conversations(*)')
+        .eq('user_id', userId);
+
+      if (partError || !myPartRows) {
+        console.warn('Could not load conversations:', partError?.message);
+        return;
+      }
+
+      const rawConvs = myPartRows
+        .map((r: any) => ({
+          conv: r.conversation as Conversation | null,
+          lastReadAt: r.last_read_at as string,
+        }))
+        .filter((x) => !!x.conv);
+
+      if (rawConvs.length === 0) {
+        setConversations([]);
+        return;
+      }
+
+      const convIds = rawConvs.map((x) => x.conv!.id);
+
+      // Fetch all participants for these conversations to resolve other_user
+      const { data: allParticipants } = await supabase
+        .from('conversation_participants')
+        .select('conversation_id, user_id, last_read_at, joined_at, user:users(*)')
+        .in('conversation_id', convIds);
+
+      // Fetch recent messages across these conversations
+      const { data: recentMessages } = await supabase
+        .from('messages')
+        .select('*')
+        .in('conversation_id', convIds)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      const participantsByConv = new Map<string, ConversationParticipant[]>();
+      for (const p of (allParticipants || []) as any[]) {
+        const list = participantsByConv.get(p.conversation_id) || [];
+        list.push(p as ConversationParticipant);
+        participantsByConv.set(p.conversation_id, list);
+      }
+
+      const lastMessageByConv = new Map<string, Message>();
+      const messagesByConv = new Map<string, Message[]>();
+      for (const m of (recentMessages || []) as Message[]) {
+        if (!lastMessageByConv.has(m.conversation_id)) {
+          lastMessageByConv.set(m.conversation_id, m);
+        }
+        const arr = messagesByConv.get(m.conversation_id) || [];
+        arr.push(m);
+        messagesByConv.set(m.conversation_id, arr);
+      }
+
+      const hydrated: Conversation[] = rawConvs.map(({ conv, lastReadAt }) => {
+        const parts = participantsByConv.get(conv!.id) || [];
+        const otherPart = parts.find((p) => p.user_id !== userId);
+        const convMsgs = messagesByConv.get(conv!.id) || [];
+        const lastReadMs = lastReadAt ? new Date(lastReadAt).getTime() : 0;
+        const unreadCount = convMsgs.filter(
+          (m) => m.sender_id !== userId && new Date(m.created_at).getTime() > lastReadMs
+        ).length;
+
+        return {
+          ...conv!,
+          participants: parts,
+          other_user: otherPart?.user,
+          last_message: lastMessageByConv.get(conv!.id) || null,
+          unread_count: conv!.id === activeConversationIdRef.current ? 0 : unreadCount,
+        };
+      });
+
+      setConversations(sortConversationsByLatest(hydrated));
+    } catch (err) {
+      console.warn('Supabase sync notice:', err);
     }
   }, []);
 
-  // Initialize Data & Supabase Sync
+  // Initialize Data & Realtime Sync
   useEffect(() => {
-    if (!isAuthenticated || !currentUser) {
-      return;
-    }
+    if (!isAuthenticated || !currentUser) return;
 
     if (!isLiveSupabaseConfigured()) {
-      setConversations(INITIAL_MOCK_CONVERSATIONS);
+      setConversations(sortConversationsByLatest(INITIAL_MOCK_CONVERSATIONS));
       return;
     }
 
-    async function loadSupabaseData() {
-      try {
-        // Fetch user conversations
-        const { data: convData } = await supabase
-          .from('conversation_participants')
-          .select(`
-            conversation:conversations (
-              id, type, title, avatar_url, created_at, updated_at
-            )
-          `)
-          .eq('user_id', currentUser!.id);
+    loadSupabaseConversations(currentUser.id);
 
-        if (convData && convData.length > 0) {
-          const loadedConvs = convData
-            .map((c: any) => c.conversation)
-            .filter(Boolean) as Conversation[];
-          setConversations(loadedConvs);
-        }
-      } catch (err) {
-        console.warn('Supabase sync notice: fallback to local cache', err);
-      }
-    }
-
-    loadSupabaseData();
-
-    // Realtime changes listener for new messages & updates (viewed_at, reactions, etc.)
     const channel = supabase
-      .channel('public:messages')
+      .channel(`home:sync:${currentUser.id}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
         (payload: any) => {
           const newMsg = payload.new as Message;
-          setConversations((prev) =>
-            prev.map((c) =>
+          setConversations((prev) => {
+            const exists = prev.some((c) => c.id === newMsg.conversation_id);
+            if (!exists) {
+              // Newly created conversation by another participant
+              loadSupabaseConversations(currentUser.id);
+              return prev;
+            }
+            const isActiveChat = newMsg.conversation_id === activeConversationIdRef.current;
+            const updated = prev.map((c) =>
               c.id === newMsg.conversation_id
                 ? {
                     ...c,
                     last_message: newMsg,
                     updated_at: newMsg.created_at,
                     unread_count:
-                      newMsg.sender_id === currentUser?.id
-                        ? c.unread_count || 0
+                      isActiveChat || newMsg.sender_id === currentUser.id
+                        ? 0
                         : (c.unread_count || 0) + 1,
                   }
                 : c
-            )
-          );
+            );
+            return sortConversationsByLatest(updated);
+          });
         }
       )
       .on(
@@ -427,13 +473,55 @@ export default function MessengerHomePage() {
           setConversations((prev) =>
             prev.map((c) =>
               c.id === updatedMsg.conversation_id && c.last_message?.id === updatedMsg.id
-                ? {
-                    ...c,
-                    last_message: updatedMsg,
-                  }
+                ? { ...c, last_message: { ...c.last_message, ...updatedMsg } }
                 : c
             )
           );
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'conversation_participants',
+          filter: `user_id=eq.${currentUser.id}`,
+        },
+        () => {
+          loadSupabaseConversations(currentUser.id);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'calls' },
+        (payload: any) => {
+          const incomingCall = payload.new as Call;
+          if (
+            !incomingCall ||
+            incomingCall.caller_id === currentUser.id ||
+            incomingCall.status !== 'ringing' ||
+            activeCallRef.current?.isOpen
+          ) {
+            return;
+          }
+          const matchingConv = conversationsRef.current.find(
+            (c) => c.id === incomingCall.conversation_id
+          );
+          if (!matchingConv) return;
+          setActiveCall({
+            isOpen: true,
+            callType: incomingCall.call_type,
+            roomName: incomingCall.room_name || `conversation-${incomingCall.conversation_id}`,
+            conversationId: incomingCall.conversation_id,
+            callId: incomingCall.id,
+            isIncoming: true,
+            participantIdentity: currentUser.id,
+            participantName: currentUser.display_name,
+            remoteParticipantName:
+              matchingConv.title || matchingConv.other_user?.display_name || 'Incoming Call',
+            remoteParticipantAvatar:
+              matchingConv.avatar_url || matchingConv.other_user?.avatar_url || '',
+          });
         }
       )
       .subscribe();
@@ -441,7 +529,7 @@ export default function MessengerHomePage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isAuthenticated, currentUser?.id]);
+  }, [isAuthenticated, currentUser, loadSupabaseConversations]);
 
   const activeConversation = useMemo(() => {
     return conversations.find((c) => c.id === activeConversationId) || null;
@@ -459,9 +547,7 @@ export default function MessengerHomePage() {
       try {
         localStorage.removeItem('messenger_demo_session');
         localStorage.removeItem('messenger_session');
-      } catch (storageErr) {
-        console.warn('Error clearing localStorage on sign out:', storageErr);
-      }
+      } catch {}
     }
     if (isLiveSupabaseConfigured()) {
       try {
@@ -476,14 +562,44 @@ export default function MessengerHomePage() {
     setActiveScreen('chats');
   }, []);
 
-  // Handlers
-  const handleSelectConversation = useCallback((convId: string) => {
-    setActiveConversationId(convId);
-    setActiveScreen('chat');
-    // Clear unread badge
-    setConversations((prev) =>
-      prev.map((c) => (c.id === convId ? { ...c, unread_count: 0 } : c))
-    );
+  // Conversation selection
+  const handleSelectConversation = useCallback(
+    (convId: string, createdConversation?: Conversation) => {
+      if (createdConversation) {
+        setConversations((prev) => {
+          if (prev.some((c) => c.id === createdConversation.id)) return prev;
+          return sortConversationsByLatest([createdConversation, ...prev]);
+        });
+      } else {
+        setConversations((prev) =>
+          prev.map((c) => (c.id === convId ? { ...c, unread_count: 0 } : c))
+        );
+      }
+
+      setActiveConversationId(convId);
+      setActiveScreen('chat');
+
+      if (isLiveSupabaseConfigured() && currentUser) {
+        supabase
+          .from('conversation_participants')
+          .update({ last_read_at: new Date().toISOString() })
+          .eq('conversation_id', convId)
+          .eq('user_id', currentUser.id)
+          .then(() => {});
+      }
+    },
+    [currentUser]
+  );
+
+  const handleMessageActivity = useCallback((conversationId: string, lastMessage: Message) => {
+    setConversations((prev) => {
+      const updated = prev.map((c) =>
+        c.id === conversationId
+          ? { ...c, last_message: lastMessage, updated_at: lastMessage.created_at, unread_count: 0 }
+          : c
+      );
+      return sortConversationsByLatest(updated);
+    });
   }, []);
 
   const handleStartCall = useCallback(
@@ -492,7 +608,9 @@ export default function MessengerHomePage() {
       setActiveCall({
         isOpen: true,
         callType: type,
-        roomName: `room-${activeConversation.id}`,
+        roomName: `conversation-${activeConversation.id}`,
+        conversationId: activeConversation.id,
+        isIncoming: false,
         participantIdentity: currentUser.id,
         participantName: currentUser.display_name,
         remoteParticipantName:
@@ -512,27 +630,23 @@ export default function MessengerHomePage() {
     setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
   }, []);
 
-  // Authentication Access Gate: strictly block access if unauthenticated
   if (isLoadingAuth) {
     return (
-      <div className="h-screen w-screen bg-[#000000] flex flex-col items-center justify-center text-white space-y-4 select-none">
+      <div className="h-[100dvh] w-screen bg-[#000000] flex flex-col items-center justify-center text-white space-y-4 select-none">
         <div className="w-12 h-12 rounded-full border-2 border-[#E1306C] border-t-transparent animate-spin" />
-        <span className="text-xs text-[#A0A0A0] tracking-wide">
-          Securing session...
-        </span>
+        <span className="text-xs text-[#A0A0A0] tracking-wide">Securing session...</span>
       </div>
     );
   }
 
   if (!isAuthenticated || !currentUser) {
-    return <GoogleSignInGate onDemoSignIn={handleDemoSignIn} />;
+    return <GoogleSignInGate onDemoSignIn={handleDemoSignIn} externalError={authError} />;
   }
 
   return (
-    <main className="h-screen w-screen overflow-hidden bg-black text-white selection:bg-[#E1306C] selection:text-white flex flex-col">
-      {/* Desktop Responsive Split View (>= md: 768px) */}
+    <main className="h-[100dvh] w-screen overflow-hidden bg-black text-white selection:bg-[#E1306C] selection:text-white flex flex-col">
+      {/* Desktop Split View */}
       <div className="hidden md:flex h-full w-full overflow-hidden">
-        {/* Left Sidebar (Screen 1 or Screen 3) */}
         <div className="w-80 lg:w-[380px] h-full flex flex-col border-r border-[#2A2A2A] bg-black flex-shrink-0">
           {activeScreen === 'profile' ? (
             <ProfilePage
@@ -546,15 +660,14 @@ export default function MessengerHomePage() {
               conversations={conversations}
               activeConversationId={activeConversationId}
               currentUser={currentUser}
-              onSelectConversation={handleSelectConversation}
+              onSelectConversation={(id) => handleSelectConversation(id)}
               onOpenProfile={() => setActiveScreen('profile')}
               onOpenNewChat={() => setIsNewChatOpen(true)}
             />
           )}
         </div>
 
-        {/* Right Main Pane (Screen 2: ChatInterface or Empty Canvas) */}
-        <div className="flex-1 h-full flex flex-col bg-black relative">
+        <div className="flex-1 h-full flex flex-col bg-black relative min-w-0">
           {activeConversation ? (
             <ChatInterface
               conversation={activeConversation}
@@ -564,6 +677,7 @@ export default function MessengerHomePage() {
                 setActiveScreen('chats');
               }}
               onStartCall={handleStartCall}
+              onMessageActivity={handleMessageActivity}
             />
           ) : (
             <div className="h-full w-full flex flex-col items-center justify-center p-8 text-center bg-black">
@@ -572,9 +686,7 @@ export default function MessengerHomePage() {
               >
                 <MessageSquarePlus className="w-10 h-10 text-white" />
               </div>
-              <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">
-                Your Messages
-              </h2>
+              <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">Your Messages</h2>
               <p className="text-sm text-[#A0A0A0] max-w-sm mb-6 leading-relaxed">
                 Send private photos, end-to-end P2P files up to 1 GB, voice notes, and make high-definition LiveKit calls with zero server costs.
               </p>
@@ -600,14 +712,14 @@ export default function MessengerHomePage() {
         </div>
       </div>
 
-      {/* Mobile Responsive Switcher (< md: 768px) */}
+      {/* Mobile Responsive Switcher */}
       <div className="md:hidden h-full w-full overflow-hidden flex flex-col">
         {activeScreen === 'chats' && (
           <ChatsList
             conversations={conversations}
             activeConversationId={activeConversationId}
             currentUser={currentUser}
-            onSelectConversation={handleSelectConversation}
+            onSelectConversation={(id) => handleSelectConversation(id)}
             onOpenProfile={() => setActiveScreen('profile')}
             onOpenNewChat={() => setIsNewChatOpen(true)}
           />
@@ -622,6 +734,7 @@ export default function MessengerHomePage() {
               setActiveScreen('chats');
             }}
             onStartCall={handleStartCall}
+            onMessageActivity={handleMessageActivity}
           />
         )}
 
@@ -642,8 +755,8 @@ export default function MessengerHomePage() {
           onClose={() => setIsNewChatOpen(false)}
           currentUser={currentUser}
           existingConversations={conversations}
-          onSelectConversation={(id) => {
-            handleSelectConversation(id);
+          onSelectConversation={(id, createdConv) => {
+            handleSelectConversation(id, createdConv);
             setIsNewChatOpen(false);
           }}
         />
@@ -655,21 +768,13 @@ export default function MessengerHomePage() {
           onClose={() => setActiveCall(null)}
           callType={activeCall.callType}
           roomName={activeCall.roomName}
+          conversationId={activeCall.conversationId}
+          callId={activeCall.callId}
+          isIncoming={activeCall.isIncoming}
           participantIdentity={activeCall.participantIdentity}
           participantName={activeCall.participantName}
           remoteParticipantName={activeCall.remoteParticipantName}
           remoteParticipantAvatar={activeCall.remoteParticipantAvatar}
-        />
-      )}
-
-      {activeP2PTransfer && activeP2PTransfer.isOpen && (
-        <P2PTransferModal
-          isOpen={activeP2PTransfer.isOpen}
-          onClose={() => setActiveP2PTransfer(null)}
-          fileName={activeP2PTransfer.fileName}
-          fileSize={activeP2PTransfer.fileSize}
-          isSender={activeP2PTransfer.isSender}
-          progress={activeP2PTransfer.progress}
         />
       )}
     </main>

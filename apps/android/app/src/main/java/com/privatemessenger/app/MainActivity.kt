@@ -10,12 +10,20 @@ import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.work.Data
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkManager
 import com.privatemessenger.app.data.auth.AuthSessionManager
+import com.privatemessenger.app.data.media.InspectedFile
+import com.privatemessenger.app.data.media.MediaFileInspector
 import com.privatemessenger.app.data.model.*
+import com.privatemessenger.app.data.remote.SupabaseSyncClient
 import com.privatemessenger.app.data.storage.MessageStorage
 import com.privatemessenger.app.data.storage.ViewOnceStorage
 import com.privatemessenger.app.data.update.InAppUpdateDownloader
@@ -23,7 +31,7 @@ import com.privatemessenger.app.data.update.ReleaseInfo
 import com.privatemessenger.app.data.update.UpdateManager
 import com.privatemessenger.app.telecom.CallForegroundService
 import com.privatemessenger.app.telecom.CallNotificationManager
-import kotlinx.coroutines.launch
+import com.privatemessenger.app.telecom.CallStateBus
 import com.privatemessenger.app.ui.components.LiveKitCallOverlay
 import com.privatemessenger.app.ui.components.ViewOnceMediaDialog
 import com.privatemessenger.app.ui.screens.AuthScreen
@@ -32,7 +40,12 @@ import com.privatemessenger.app.ui.screens.ChatsListScreen
 import com.privatemessenger.app.ui.screens.ProfileScreen
 import com.privatemessenger.app.ui.theme.OledBackground
 import com.privatemessenger.app.ui.theme.PrivateMessengerTheme
+import com.privatemessenger.app.webrtc.P2PTransferRegistry
+import com.privatemessenger.app.work.FileTransferWorker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.util.*
 
 enum class CurrentScreen {
@@ -46,9 +59,12 @@ class MainActivity : ComponentActivity() {
 
     private var activeCallState = mutableStateOf<Call?>(null)
     private var isInPiPModeState = mutableStateOf(false)
+    private var pendingSharedText = mutableStateOf<String?>(null)
+    private var pendingSharedUris = mutableStateListOf<Uri>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
 
         handleIncomingShareIntent(intent)
         handleCallIntent(intent)
@@ -58,6 +74,7 @@ class MainActivity : ComponentActivity() {
             val viewOnceStorage = remember { ViewOnceStorage(applicationContext) }
             val messageStorage = remember { MessageStorage(applicationContext) }
             val updateManager = remember { UpdateManager() }
+            val workManager = remember { WorkManager.getInstance(applicationContext) }
             val coroutineScope = rememberCoroutineScope()
 
             var isAuthenticated by remember { mutableStateOf(authSessionManager.isAuthenticated()) }
@@ -74,11 +91,32 @@ class MainActivity : ComponentActivity() {
             var activeThemeAccent by remember { mutableStateOf(currentUser.themeAccent) }
             var currentScreen by remember { mutableStateOf(if (isAuthenticated) CurrentScreen.CHATS_LIST else CurrentScreen.AUTH) }
             var selectedConversation by remember { mutableStateOf<Conversation?>(null) }
-            var activeWallpaper by remember { mutableStateOf("") }
+            var activeWallpaper by remember { mutableStateOf(currentUser.chatBackgroundUrl.ifBlank { "pure-black" }) }
             var activeViewOnceMessage by remember { mutableStateOf<Message?>(null) }
             var availableUpdate by remember { mutableStateOf<ReleaseInfo?>(null) }
             var updateDownloadState by remember {
                 mutableStateOf<InAppUpdateDownloader.DownloadState>(InAppUpdateDownloader.DownloadState.Idle)
+            }
+
+            // Listen for notification/lockscreen call actions
+            LaunchedEffect(Unit) {
+                CallStateBus.events.collect { event ->
+                    when (event) {
+                        is CallStateBus.Event.EndCallRequested -> {
+                            activeCallState.value = null
+                            stopCallService()
+                        }
+                        is CallStateBus.Event.DeclineCallRequested -> {
+                            activeCallState.value = null
+                            stopCallService()
+                        }
+                        is CallStateBus.Event.AnswerCallRequested -> {
+                            activeCallState.value = event.call
+                            startCallService(event.call)
+                        }
+                        else -> Unit
+                    }
+                }
             }
 
             // Checks for in-app updates against GitHub Releases API
@@ -87,7 +125,7 @@ class MainActivity : ComponentActivity() {
                     val update = updateManager.checkForUpdate(
                         currentVersionCode = BuildConfig.VERSION_CODE,
                         currentVersionName = BuildConfig.VERSION_NAME,
-                        isDebugBuild = false,
+                        isDebugBuild = BuildConfig.DEBUG,
                         forceCheck = force
                     )
                     availableUpdate = update
@@ -134,7 +172,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Demo active conversations list
             val conversations = remember {
                 mutableStateListOf(
                     Conversation(
@@ -172,7 +209,7 @@ class MainActivity : ComponentActivity() {
 
             // Seed initial conversation messages in durable MessageStorage if empty
             LaunchedEffect(Unit) {
-                val sampleViewOnceId = "msg-2"
+                val sampleViewOnceId = "msg-view-once-photo-1"
                 val defaultConv1 = listOf(
                     Message(
                         id = "msg-1",
@@ -185,11 +222,16 @@ class MainActivity : ComponentActivity() {
                     Message(
                         id = sampleViewOnceId,
                         conversationId = "conv-1",
-                        senderId = "user-me",
-                        senderName = "Alex Friend",
-                        content = "Here is the sample View Once photo. Tap to open!",
+                        senderId = "user-sarah",
+                        senderName = "Sarah Jenkins",
+                        content = "",
+                        mediaUrl = "sample://view-once-photo",
+                        mediaType = MediaType.IMAGE,
+                        fileName = "sunset_preview.jpg",
+                        fileSize = 1_240_000L,
+                        mimeType = "image/jpeg",
                         isViewOnce = true,
-                        viewedAt = if (viewOnceStorage.isViewed(sampleViewOnceId)) "Opened" else null,
+                        viewedAt = viewOnceStorage.getViewedAt(sampleViewOnceId),
                         createdAt = "10:15"
                     ),
                     Message(
@@ -198,8 +240,9 @@ class MainActivity : ComponentActivity() {
                         senderId = "user-2",
                         senderName = "David",
                         content = "Testing reply quote and reaction pills.",
-                        replyToSenderName = "Alex Friend",
-                        replyToContent = "Here is the sample View Once photo. Tap to open!",
+                        replyToId = "msg-1",
+                        replyToSenderName = "Sarah Jenkins",
+                        replyToContent = "Hey everyone! Welcome to our $0-cost private messenger.",
                         createdAt = "10:18",
                         reactions = listOf(
                             Reaction(messageId = "msg-3", userId = "user-me", emoji = "❤️"),
@@ -222,7 +265,6 @@ class MainActivity : ComponentActivity() {
                 messageStorage.seedIfEmpty("conv-2", defaultConv2, viewOnceStorage)
             }
 
-            // Dynamic messages for the active conversation backed by durable storage
             val currentConversationMessages = remember { mutableStateListOf<Message>() }
 
             // Whenever active conversation changes, reload its messages from storage
@@ -231,6 +273,126 @@ class MainActivity : ComponentActivity() {
                 selectedConversation?.let { conv ->
                     val stored = messageStorage.getMessages(conv.id, viewOnceStorage)
                     currentConversationMessages.addAll(stored)
+                }
+            }
+
+            // Helper to update conversation preview
+            val updateConversationLastMessage: (String, Message) -> Unit = { convId, msg ->
+                val idx = conversations.indexOfFirst { it.id == convId }
+                if (idx != -1) {
+                    conversations[idx] = conversations[idx].copy(lastMessage = msg, unreadCount = 0)
+                }
+            }
+
+            // Enqueue WorkManager transfer & persist real attachment message
+            val enqueueAttachmentTransfer: (Conversation, InspectedFile, String, Boolean, Boolean) -> Unit = { conv, inspected, caption, isViewOnce, useP2p ->
+                val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+                val transferId = UUID.randomUUID().toString()
+                val safeViewOnce = isViewOnce && inspected.mediaType == MediaType.IMAGE && !useP2p
+                val localSource = inspected.localCachePath.ifBlank { inspected.uri.toString() }
+
+                val newMsg = Message(
+                    conversationId = conv.id,
+                    senderId = currentUser.id,
+                    senderName = currentUser.displayName,
+                    content = caption,
+                    mediaUrl = localSource,
+                    localUri = localSource,
+                    mediaType = inspected.mediaType,
+                    fileName = inspected.fileName,
+                    fileSize = inspected.fileSize,
+                    mimeType = inspected.mimeType,
+                    fileHashSha256 = inspected.sha256,
+                    isP2pTransfer = useP2p,
+                    transferId = transferId,
+                    transferStatus = P2PTransferStatus.TRANSFERRING,
+                    transferProgress = 0,
+                    isViewOnce = safeViewOnce,
+                    createdAt = time
+                )
+
+                currentConversationMessages.add(newMsg)
+                messageStorage.saveMessage(newMsg, viewOnceStorage)
+                updateConversationLastMessage(conv.id, newMsg)
+
+                val p2pRecord = P2PTransfer(
+                    id = transferId,
+                    conversationId = conv.id,
+                    senderId = currentUser.id,
+                    receiverId = conv.otherUser?.id ?: "peer",
+                    fileName = inspected.fileName,
+                    fileSize = inspected.fileSize,
+                    fileType = inspected.mimeType,
+                    fileHashSha256 = inspected.sha256,
+                    status = P2PTransferStatus.TRANSFERRING
+                )
+                P2PTransferRegistry.updateTransfer(p2pRecord)
+
+                val inputData = Data.Builder()
+                    .putString(FileTransferWorker.KEY_TRANSFER_ID, transferId)
+                    .putString(FileTransferWorker.KEY_CONVERSATION_ID, conv.id)
+                    .putString(FileTransferWorker.KEY_SENDER_ID, currentUser.id)
+                    .putString(FileTransferWorker.KEY_RECEIVER_ID, conv.otherUser?.id ?: "peer")
+                    .putString(FileTransferWorker.KEY_FILE_URI, inspected.uri.toString())
+                    .putString(FileTransferWorker.KEY_FILE_NAME, inspected.fileName)
+                    .putLong(FileTransferWorker.KEY_FILE_SIZE, inspected.fileSize)
+                    .putString(FileTransferWorker.KEY_MIME_TYPE, inspected.mimeType)
+                    .putString(FileTransferWorker.KEY_FILE_HASH, inspected.sha256)
+                    .putBoolean(FileTransferWorker.KEY_IS_P2P, useP2p)
+                    .build()
+
+                val workReq = OneTimeWorkRequestBuilder<FileTransferWorker>()
+                    .setInputData(inputData)
+                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                    .build()
+                workManager.enqueue(workReq)
+
+                coroutineScope.launch(Dispatchers.IO) {
+                    if (useP2p) {
+                        SupabaseSyncClient.upsertP2pTransfer(null, p2pRecord)
+                    }
+                    SupabaseSyncClient.insertMessage(null, newMsg)
+                }
+            }
+
+            // Process Android Share Sheet intents once authenticated
+            LaunchedEffect(isAuthenticated, pendingSharedText.value, pendingSharedUris.size) {
+                if (isAuthenticated && (pendingSharedText.value != null || pendingSharedUris.isNotEmpty())) {
+                    val targetConv = selectedConversation ?: conversations.firstOrNull()
+                    if (targetConv != null) {
+                        selectedConversation = targetConv
+                        currentScreen = CurrentScreen.CHAT_DETAIL
+                        val text = pendingSharedText.value
+                        if (!text.isNullOrBlank()) {
+                            pendingSharedText.value = null
+                            val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+                            val msg = Message(
+                                conversationId = targetConv.id,
+                                senderId = currentUser.id,
+                                senderName = currentUser.displayName,
+                                content = text,
+                                createdAt = time
+                            )
+                            messageStorage.saveMessage(msg, viewOnceStorage)
+                            currentConversationMessages.add(msg)
+                            updateConversationLastMessage(targetConv.id, msg)
+                        }
+                        if (pendingSharedUris.isNotEmpty()) {
+                            val urisToProcess = pendingSharedUris.toList()
+                            pendingSharedUris.clear()
+                            urisToProcess.forEach { uri ->
+                                MediaFileInspector.inspectAndCache(
+                                    context = this@MainActivity,
+                                    uri = uri,
+                                    persistLocalCopy = true,
+                                    computeSha256 = true
+                                ).onSuccess { inspected ->
+                                    val useP2p = inspected.fileSize > MediaFileInspector.MAX_SUPABASE_STORAGE_BYTES
+                                    enqueueAttachmentTransfer(targetConv, inspected, "", false, useP2p)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -249,15 +411,13 @@ class MainActivity : ComponentActivity() {
 
             PrivateMessengerTheme(accent = activeThemeAccent) {
                 BackHandler(
-                    enabled = (isAuthenticated && currentScreen != CurrentScreen.CHATS_LIST) || activeCallState.value != null || activeViewOnceMessage != null
+                    enabled = (isAuthenticated && currentScreen != CurrentScreen.CHATS_LIST) ||
+                        activeCallState.value != null ||
+                        activeViewOnceMessage != null
                 ) {
                     when {
-                        activeViewOnceMessage != null -> {
-                            activeViewOnceMessage = null
-                        }
-                        activeCallState.value != null -> {
-                            enterPipMode()
-                        }
+                        activeViewOnceMessage != null -> activeViewOnceMessage = null
+                        activeCallState.value != null -> enterPipMode()
                         currentScreen == CurrentScreen.CHAT_DETAIL -> {
                             currentScreen = CurrentScreen.CHATS_LIST
                             selectedConversation = null
@@ -273,10 +433,13 @@ class MainActivity : ComponentActivity() {
                     color = OledBackground
                 ) {
                     when {
-                        // In-Call Overlay (or Picture-in-Picture)
                         activeCallState.value != null -> {
+                            val activeCall = activeCallState.value!!
                             LiveKitCallOverlay(
-                                call = activeCallState.value!!,
+                                call = activeCall,
+                                participantIdentity = currentUser.id,
+                                participantName = currentUser.displayName,
+                                isInPiPMode = isInPiPModeState.value,
                                 onEndCall = {
                                     activeCallState.value = null
                                     stopCallService()
@@ -285,7 +448,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // R1: Authentication Access Gate - Strictly block unauthenticated access
+                        // Strict Google Sign-In Gate
                         !isAuthenticated || currentScreen == CurrentScreen.AUTH -> {
                             AuthScreen(
                                 accent = activeThemeAccent,
@@ -302,21 +465,34 @@ class MainActivity : ComponentActivity() {
                         currentScreen == CurrentScreen.CHATS_LIST -> {
                             ChatsListScreen(
                                 conversations = conversations,
+                                currentUser = currentUser,
                                 accent = activeThemeAccent,
                                 updateInfo = availableUpdate,
                                 updateDownloadState = updateDownloadState,
                                 onConversationClick = { conv ->
+                                    val idx = conversations.indexOfFirst { it.id == conv.id }
+                                    if (idx != -1 && conversations[idx].unreadCount > 0) {
+                                        conversations[idx] = conversations[idx].copy(unreadCount = 0)
+                                    }
                                     selectedConversation = conv
                                     currentScreen = CurrentScreen.CHAT_DETAIL
                                 },
                                 onProfileClick = { currentScreen = CurrentScreen.PROFILE },
-                                onNewChatClick = {
+                                onNewChatClick = { contactName, contactEmail ->
+                                    val convId = "conv-${UUID.randomUUID().toString().take(8)}"
                                     val newConv = Conversation(
-                                        title = "Friend #${conversations.size + 1}",
+                                        id = convId,
+                                        title = contactName,
+                                        type = "direct",
+                                        otherUser = User(
+                                            id = "user-${UUID.randomUUID().toString().take(8)}",
+                                            email = contactEmail,
+                                            displayName = contactName
+                                        ),
                                         lastMessage = Message(
-                                            conversationId = UUID.randomUUID().toString(),
-                                            senderId = "user-new",
-                                            content = "New chat initialized",
+                                            conversationId = convId,
+                                            senderId = currentUser.id,
+                                            content = "New encrypted chat initialized",
                                             createdAt = "Now"
                                         )
                                     )
@@ -329,110 +505,162 @@ class MainActivity : ComponentActivity() {
                         }
 
                         currentScreen == CurrentScreen.CHAT_DETAIL && selectedConversation != null -> {
+                            val activeConv = selectedConversation!!
                             ChatDetailScreen(
-                                conversation = selectedConversation!!,
+                                conversation = activeConv,
                                 messages = currentConversationMessages,
                                 currentUserId = currentUser.id,
                                 accent = activeThemeAccent,
+                                stickerPacks = stickerPacks,
+                                wallpaper = activeWallpaper,
                                 onBack = {
                                     currentScreen = CurrentScreen.CHATS_LIST
                                     selectedConversation = null
                                 },
                                 isViewOnceViewed = { id -> viewOnceStorage.isViewed(id) },
-                                onSendMessage = { text, replyTo, isViewOnce ->
+                                onSendMessage = { text, replyTo ->
                                     val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                                     val newMsg = Message(
-                                        conversationId = selectedConversation!!.id,
+                                        conversationId = activeConv.id,
                                         senderId = currentUser.id,
                                         senderName = currentUser.displayName,
                                         content = text,
-                                        isViewOnce = isViewOnce,
+                                        mediaType = MediaType.TEXT,
+                                        isViewOnce = false,
                                         replyToId = replyTo?.id,
                                         replyToSenderName = replyTo?.senderName,
-                                        replyToContent = replyTo?.content,
+                                        replyToContent = replyTo?.let {
+                                            if (it.isViewOnce) "1 Photo • View Once" else it.content.ifBlank { it.fileName }
+                                        },
                                         createdAt = time
                                     )
                                     currentConversationMessages.add(newMsg)
                                     messageStorage.saveMessage(newMsg, viewOnceStorage)
+                                    updateConversationLastMessage(activeConv.id, newMsg)
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        SupabaseSyncClient.insertMessage(null, newMsg)
+                                    }
                                 },
-                                onSendFile = { fileName, fileSize, isP2p ->
+                                onSendAttachment = { inspected, caption, isViewOnce, useP2p ->
+                                    enqueueAttachmentTransfer(activeConv, inspected, caption, isViewOnce, useP2p)
+                                },
+                                onSendVoiceNote = { uri, fileName, fileSize, durationSec ->
                                     val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                                     val newMsg = Message(
-                                        conversationId = selectedConversation!!.id,
+                                        conversationId = activeConv.id,
                                         senderId = currentUser.id,
                                         senderName = currentUser.displayName,
-                                        content = if (isP2p) "📦 P2P Transfer: $fileName (${fileSize / (1024 * 1024)} MB)" else "📎 Attached: $fileName",
+                                        content = "Voice Note (0:${durationSec.toString().padStart(2, '0')})",
+                                        mediaUrl = uri.toString(),
+                                        localUri = uri.toString(),
+                                        mediaType = MediaType.AUDIO,
                                         fileName = fileName,
                                         fileSize = fileSize,
+                                        mimeType = "audio/mp4",
+                                        audioDurationSec = durationSec,
                                         createdAt = time
                                     )
                                     currentConversationMessages.add(newMsg)
                                     messageStorage.saveMessage(newMsg, viewOnceStorage)
+                                    updateConversationLastMessage(activeConv.id, newMsg)
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        SupabaseSyncClient.insertMessage(null, newMsg)
+                                    }
+                                },
+                                onSendSticker = { sticker ->
+                                    val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+                                    val newMsg = Message(
+                                        conversationId = activeConv.id,
+                                        senderId = currentUser.id,
+                                        senderName = currentUser.displayName,
+                                        content = "Sticker",
+                                        mediaUrl = sticker.imageUrl,
+                                        localUri = sticker.imageUrl,
+                                        mediaType = MediaType.STICKER,
+                                        createdAt = time
+                                    )
+                                    currentConversationMessages.add(newMsg)
+                                    messageStorage.saveMessage(newMsg, viewOnceStorage)
+                                    updateConversationLastMessage(activeConv.id, newMsg)
                                 },
                                 onVoiceCall = {
                                     val newCall = Call(
-                                        conversationId = selectedConversation!!.id,
+                                        conversationId = activeConv.id,
                                         callerId = currentUser.id,
-                                        callerName = selectedConversation!!.title ?: "Friend",
+                                        callerName = activeConv.title ?: activeConv.otherUser?.displayName ?: "Friend",
                                         callType = CallType.AUDIO,
-                                        roomName = "room-${selectedConversation!!.id}"
+                                        roomName = "conversation-${activeConv.id}"
                                     )
                                     activeCallState.value = newCall
-                                    startCallService(newCall.roomName, newCall.callType.key)
+                                    startCallService(newCall)
                                 },
                                 onVideoCall = {
                                     val newCall = Call(
-                                        conversationId = selectedConversation!!.id,
+                                        conversationId = activeConv.id,
                                         callerId = currentUser.id,
-                                        callerName = selectedConversation!!.title ?: "Friend",
+                                        callerName = activeConv.title ?: activeConv.otherUser?.displayName ?: "Friend",
                                         callType = CallType.VIDEO,
-                                        roomName = "room-${selectedConversation!!.id}"
+                                        roomName = "conversation-${activeConv.id}"
                                     )
                                     activeCallState.value = newCall
-                                    startCallService(newCall.roomName, newCall.callType.key)
-                                },
-                                onContactProfileClick = {
-                                    // Header click opens conversation partner profile card
+                                    startCallService(newCall)
                                 },
                                 onOpenViewOnce = { msg ->
-                                    // Block re-opening if already viewed
-                                    if (!viewOnceStorage.isViewed(msg.id) && msg.viewedAt == null) {
+                                    if (msg.isPhotoViewOnce && !viewOnceStorage.isViewed(msg.id) && msg.viewedAt == null) {
                                         activeViewOnceMessage = msg
                                     }
                                 },
                                 onDeleteForEveryone = { msg ->
                                     val idx = currentConversationMessages.indexOfFirst { it.id == msg.id }
                                     if (idx != -1) {
-                                        currentConversationMessages[idx] = currentConversationMessages[idx].copy(deletedForEveryone = true)
-                                        messageStorage.saveMessage(currentConversationMessages[idx], viewOnceStorage)
+                                        val nowIso = Instant.now().toString()
+                                        val updated = currentConversationMessages[idx].copy(
+                                            deletedForEveryone = true,
+                                            deletedAt = nowIso,
+                                            deletedBy = currentUser.id
+                                        )
+                                        currentConversationMessages[idx] = updated
+                                        messageStorage.saveMessage(updated, viewOnceStorage)
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            SupabaseSyncClient.softDeleteMessage(null, msg.id, currentUser.id, nowIso)
+                                        }
                                     }
                                 },
                                 onAddReaction = { msg, emoji ->
                                     val idx = currentConversationMessages.indexOfFirst { it.id == msg.id }
                                     if (idx != -1) {
-                                        val existingReactions = currentConversationMessages[idx].reactions.toMutableList()
-                                        existingReactions.add(Reaction(messageId = msg.id, userId = currentUser.id, emoji = emoji))
-                                        currentConversationMessages[idx] = currentConversationMessages[idx].copy(reactions = existingReactions)
-                                        messageStorage.saveMessage(currentConversationMessages[idx], viewOnceStorage)
+                                        val existing = currentConversationMessages[idx].reactions.toMutableList()
+                                        val already = existing.indexOfFirst { it.userId == currentUser.id && it.emoji == emoji }
+                                        if (already != -1) {
+                                            existing.removeAt(already)
+                                        } else {
+                                            existing.add(Reaction(messageId = msg.id, userId = currentUser.id, emoji = emoji))
+                                        }
+                                        val updated = currentConversationMessages[idx].copy(reactions = existing)
+                                        currentConversationMessages[idx] = updated
+                                        messageStorage.saveMessage(updated, viewOnceStorage)
                                     }
                                 }
                             )
 
-                            // View Once Protected Dialog with FLAG_SECURE and persistent state locking
                             activeViewOnceMessage?.let { viewOnceMsg ->
                                 ViewOnceMediaDialog(
                                     message = viewOnceMsg,
                                     onDismiss = { activeViewOnceMessage = null },
                                     onMediaViewed = { msgId ->
-                                        // Persist viewed status permanently in SharedPreferences
-                                        viewOnceStorage.markAsViewed(msgId)
-                                        selectedConversation?.let { conv ->
-                                            messageStorage.markViewOnceOpened(conv.id, msgId, viewOnceStorage)
-                                        }
+                                        val viewedIso = viewOnceStorage.markAsViewed(msgId, Instant.now().toString())
+                                        val updated = messageStorage.markViewOnceOpened(activeConv.id, msgId, viewOnceStorage)
                                         val idx = currentConversationMessages.indexOfFirst { it.id == msgId }
                                         if (idx != -1) {
-                                            val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                                            currentConversationMessages[idx] = currentConversationMessages[idx].copy(viewedAt = time, content = "")
+                                            currentConversationMessages[idx] = updated ?: currentConversationMessages[idx].copy(
+                                                viewedAt = viewedIso,
+                                                content = "",
+                                                mediaUrl = "",
+                                                localUri = ""
+                                            )
+                                        }
+                                        coroutineScope.launch(Dispatchers.IO) {
+                                            SupabaseSyncClient.markViewOnceViewed(null, msgId, viewedIso)
                                         }
                                     }
                                 )
@@ -451,15 +679,32 @@ class MainActivity : ComponentActivity() {
                                     currentUser = updatedUser
                                     authSessionManager.saveSession(updatedUser)
                                 },
+                                onUpdateAvatar = { avatarUri ->
+                                    val updatedUser = currentUser.copy(avatarUrl = avatarUri)
+                                    currentUser = updatedUser
+                                    authSessionManager.saveSession(updatedUser)
+                                },
                                 onUpdateAccent = { newAccent ->
                                     activeThemeAccent = newAccent
                                     val updatedUser = currentUser.copy(themeAccent = newAccent)
                                     currentUser = updatedUser
                                     authSessionManager.saveSession(updatedUser)
                                 },
-                                onUpdateWallpaper = { newWallpaper -> activeWallpaper = newWallpaper },
+                                onUpdateWallpaper = { newWallpaper ->
+                                    activeWallpaper = newWallpaper
+                                    val updatedUser = currentUser.copy(chatBackgroundUrl = newWallpaper)
+                                    currentUser = updatedUser
+                                    authSessionManager.saveSession(updatedUser)
+                                },
                                 onCreateStickerPack = { name ->
                                     stickerPacks.add(StickerPack(name = name, creatorId = currentUser.id))
+                                },
+                                onAddStickerToPack = { packId, imageUri ->
+                                    val idx = stickerPacks.indexOfFirst { it.id == packId }
+                                    if (idx != -1) {
+                                        val updatedStickers = stickerPacks[idx].stickers + Sticker(packId = packId, imageUrl = imageUri)
+                                        stickerPacks[idx] = stickerPacks[idx].copy(stickers = updatedStickers)
+                                    }
                                 },
                                 onDeleteStickerPack = { packId ->
                                     stickerPacks.removeAll { it.id == packId }
@@ -490,32 +735,44 @@ class MainActivity : ComponentActivity() {
         handleCallIntent(intent)
     }
 
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (activeCallState.value != null) {
+            enterPipMode()
+        }
+    }
+
     private fun handleCallIntent(intent: Intent?) {
         if (intent == null) return
         if (intent.action == "ACTION_ANSWER_CALL") {
             val callId = intent.getStringExtra("CALL_ID") ?: UUID.randomUUID().toString()
-            val roomName = intent.getStringExtra("ROOM_NAME") ?: "room-active"
+            val conversationId = intent.getStringExtra("CONVERSATION_ID") ?: "conv-call"
+            val callerName = intent.getStringExtra("CALLER_NAME") ?: "Friend"
+            val roomName = intent.getStringExtra("ROOM_NAME") ?: "conversation-$conversationId"
             val callTypeStr = intent.getStringExtra("CALL_TYPE") ?: "audio"
             val callType = if (callTypeStr.equals("video", ignoreCase = true)) CallType.VIDEO else CallType.AUDIO
             val activeCall = Call(
                 id = callId,
-                conversationId = "conv-call",
+                conversationId = conversationId,
                 callerId = "caller-partner",
-                callerName = "Friend",
+                callerName = callerName,
                 callType = callType,
-                roomName = roomName
+                roomName = roomName,
+                status = CallStatus.ONGOING
             )
             activeCallState.value = activeCall
-            startCallService(roomName, callTypeStr)
+            startCallService(activeCall)
             CallNotificationManager.dismissIncomingCallNotification(this)
         }
     }
 
-    private fun startCallService(roomName: String, callType: String) {
+    private fun startCallService(call: Call) {
         val serviceIntent = Intent(this, CallForegroundService::class.java).apply {
             action = "ACTION_START_CALL"
-            putExtra("ROOM_NAME", roomName)
-            putExtra("CALL_TYPE", callType)
+            putExtra("CALL_ID", call.id)
+            putExtra("CALLER_NAME", call.callerName)
+            putExtra("ROOM_NAME", call.roomName)
+            putExtra("CALL_TYPE", call.callType.key)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
@@ -541,35 +798,43 @@ class MainActivity : ComponentActivity() {
             if (Intent.ACTION_SEND == action && type != null) {
                 if ("text/plain" == type) {
                     val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-                    // Shared text handled
+                    if (!sharedText.isNullOrBlank()) {
+                        pendingSharedText.value = sharedText
+                    }
                 } else {
-                    val imageUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    val mediaUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
                     } else {
                         @Suppress("DEPRECATION")
                         intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
                     }
-                    // Shared media URI handled
+                    if (mediaUri != null) {
+                        pendingSharedUris.add(mediaUri)
+                    }
                 }
             } else if (Intent.ACTION_SEND_MULTIPLE == action && type != null) {
-                val imageUris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val uris = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
                 } else {
                     @Suppress("DEPRECATION")
                     intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
                 }
-                // Multiple shared files handled
+                if (!uris.isNullOrEmpty()) {
+                    pendingSharedUris.addAll(uris)
+                }
             }
         } catch (_: Exception) {}
     }
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val aspectRatio = Rational(16, 9)
-            val params = PictureInPictureParams.Builder()
-                .setAspectRatio(aspectRatio)
-                .build()
-            enterPictureInPictureMode(params)
+            try {
+                val aspectRatio = Rational(9, 16)
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) {}
         }
     }
 

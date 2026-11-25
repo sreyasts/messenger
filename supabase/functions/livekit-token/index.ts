@@ -10,6 +10,12 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const jsonHeaders = {
+  ...corsHeaders,
+  "Content-Type": "application/json",
+  "Cache-Control": "no-store",
+};
+
 interface TokenRequestBody {
   roomName: string;
   participantIdentity: string;
@@ -20,6 +26,13 @@ serve(async (req: Request) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed. Use POST." }),
+      { status: 405, headers: jsonHeaders }
+    );
   }
 
   try {
@@ -34,7 +47,7 @@ serve(async (req: Request) => {
         }),
         {
           status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: jsonHeaders,
         }
       );
     }
@@ -52,7 +65,24 @@ serve(async (req: Request) => {
         }),
         {
           status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: jsonHeaders,
+        }
+      );
+    }
+
+    if (
+      Array.isArray(body) ||
+      (body.roomName !== undefined && typeof body.roomName !== "string") ||
+      (body.participantIdentity !== undefined && typeof body.participantIdentity !== "string") ||
+      (body.participantName !== undefined && body.participantName !== null && typeof body.participantName !== "string")
+    ) {
+      return new Response(
+        JSON.stringify({
+          error: "Invalid parameter types: 'roomName', 'participantIdentity', and 'participantName' must be strings.",
+        }),
+        {
+          status: 400,
+          headers: jsonHeaders,
         }
       );
     }
@@ -68,7 +98,19 @@ serve(async (req: Request) => {
         }),
         {
           status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: jsonHeaders,
+        }
+      );
+    }
+
+    if (roomName.length > 256 || participantIdentity.length > 256) {
+      return new Response(
+        JSON.stringify({
+          error: "Parameter length exceeds 256 characters.",
+        }),
+        {
+          status: 400,
+          headers: jsonHeaders,
         }
       );
     }
@@ -86,6 +128,7 @@ serve(async (req: Request) => {
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
+      canUpdateOwnMetadata: true,
     });
 
     const token = await at.toJwt();
@@ -99,15 +142,16 @@ serve(async (req: Request) => {
       }),
       {
         status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: jsonHeaders,
       }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Failed to generate token";
     return new Response(
-      JSON.stringify({ error: error.message || "Failed to generate token" }),
+      JSON.stringify({ error: message }),
       {
         status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: jsonHeaders,
       }
     );
   }

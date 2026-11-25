@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { User, ThemeAccent, StickerPack } from '@/types/database';
-import { useTheme, THEME_CONFIGS, WALLPAPER_PRESETS } from '@/lib/theme/ThemeContext';
+import { useTheme, WALLPAPER_PRESETS } from '@/lib/theme/ThemeContext';
 import { supabase, isLiveSupabaseConfigured } from '@/lib/supabase/client';
+import { uploadToSupabaseBucket } from '@/lib/supabase/storage';
 import {
   ArrowLeft,
   Camera,
@@ -14,6 +15,8 @@ import {
   Image as ImageIcon,
   CheckCheck,
   LogOut,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
 
 interface ProfilePageProps {
@@ -31,6 +34,28 @@ const ACCENT_OPTIONS: { id: ThemeAccent; name: string; gradient: string; primary
   { id: 'monochrome', name: 'Monochrome', gradient: 'from-[#555555] to-[#222222]', primary: '#E5E5E5' },
 ];
 
+const DEMO_STICKER_PACKS = (userId: string): StickerPack[] => [
+  {
+    id: 'pack-01',
+    name: 'Cyber Moods',
+    creator_id: userId,
+    created_at: new Date().toISOString(),
+    stickers: [
+      { id: 'stk-1', pack_id: 'pack-01', image_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120', created_at: '' },
+      { id: 'stk-2', pack_id: 'pack-01', image_url: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=120', created_at: '' },
+    ],
+  },
+  {
+    id: 'pack-02',
+    name: 'Pixel Reactions (Community)',
+    creator_id: 'user-other',
+    created_at: new Date().toISOString(),
+    stickers: [
+      { id: 'stk-3', pack_id: 'pack-02', image_url: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=120', created_at: '' },
+    ],
+  },
+];
+
 export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignOut }: ProfilePageProps) {
   const { accent, setAccent, wallpaper, setWallpaper, config } = useTheme();
 
@@ -39,30 +64,14 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
   const [bio, setBio] = useState(currentUser.bio || '');
   const [avatarUrl, setAvatarUrl] = useState(currentUser.avatar_url || '');
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Sticker Packs State
-  const [stickerPacks, setStickerPacks] = useState<StickerPack[]>([
-    {
-      id: 'pack-01',
-      name: 'Cyber Moods',
-      creator_id: currentUser.id,
-      created_at: new Date().toISOString(),
-      stickers: [
-        { id: 'stk-1', pack_id: 'pack-01', image_url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=120', created_at: '' },
-        { id: 'stk-2', pack_id: 'pack-01', image_url: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=120', created_at: '' },
-      ],
-    },
-    {
-      id: 'pack-02',
-      name: 'Pixel Reactions (Community)',
-      creator_id: 'user-other',
-      created_at: new Date().toISOString(),
-      stickers: [
-        { id: 'stk-3', pack_id: 'pack-02', image_url: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=120', created_at: '' },
-      ],
-    },
-  ]);
+  const [stickerPacks, setStickerPacks] = useState<StickerPack[]>(
+    isLiveSupabaseConfigured() ? [] : DEMO_STICKER_PACKS(currentUser.id)
+  );
   const [newPackName, setNewPackName] = useState('');
   const [isCreatingPack, setIsCreatingPack] = useState(false);
 
@@ -70,60 +79,131 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
   const stickerFileInputRef = useRef<HTMLInputElement>(null);
   const [targetPackForSticker, setTargetPackForSticker] = useState<string | null>(null);
 
-  // Handle Avatar Image Upload
-  const handleAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  useEffect(() => {
+    setDisplayName(currentUser.display_name);
+    setBio(currentUser.bio || '');
+    setAvatarUrl(currentUser.avatar_url || '');
+  }, [currentUser.display_name, currentUser.bio, currentUser.avatar_url]);
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setAvatarUrl(dataUrl);
-      if (onUpdateUser) onUpdateUser({ avatar_url: dataUrl });
+  // Load sticker packs from Supabase when live
+  useEffect(() => {
+    if (!isLiveSupabaseConfigured()) return;
+    let active = true;
+    supabase
+      .from('sticker_packs')
+      .select('*, stickers(*)')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (active && data) {
+          setStickerPacks(data as StickerPack[]);
+        }
+      });
+    return () => {
+      active = false;
     };
-    reader.onerror = (err) => {
-      console.warn('Failed to read avatar file:', err);
-    };
-    reader.readAsDataURL(file);
+  }, []);
+
+  // Upload Avatar Image to Supabase Storage (`avatars` bucket)
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setErrorMsg(null);
+    setIsUploadingAvatar(true);
+
+    try {
+      const uploaded = await uploadToSupabaseBucket('avatars', file, {
+        folder: currentUser.id,
+        fileName: file.name,
+        maxBytes: 5 * 1024 * 1024,
+      });
+      setAvatarUrl(uploaded.publicUrl);
+      onUpdateUser?.({ avatar_url: uploaded.publicUrl });
+      if (isLiveSupabaseConfigured()) {
+        const { error } = await supabase
+          .from('users')
+          .update({ avatar_url: uploaded.publicUrl })
+          .eq('id', currentUser.id);
+        if (error) throw new Error(error.message);
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to upload avatar.');
+    } finally {
+      setIsUploadingAvatar(false);
+    }
   };
 
   // Save Profile Changes
   const handleSaveProfile = async () => {
-    setIsSaving(true);
-    const updated = { display_name: displayName, bio, avatar_url: avatarUrl };
-
-    if (onUpdateUser) {
-      onUpdateUser(updated);
+    const trimmedName = displayName.trim();
+    if (!trimmedName) {
+      setErrorMsg('Display name cannot be empty.');
+      return;
     }
 
-    if (isLiveSupabaseConfigured()) {
-      try {
-        await supabase
+    setIsSaving(true);
+    setErrorMsg(null);
+    const updated = {
+      display_name: trimmedName,
+      bio: bio.trim(),
+      avatar_url: avatarUrl,
+      theme_accent: accent,
+      chat_background_url: wallpaper,
+    };
+
+    try {
+      if (isLiveSupabaseConfigured()) {
+        const { error } = await supabase
           .from('users')
           .update({
-            display_name: displayName,
-            bio,
-            avatar_url: avatarUrl,
+            display_name: updated.display_name,
+            bio: updated.bio,
+            avatar_url: updated.avatar_url,
             theme_accent: accent,
             chat_background_url: wallpaper,
+            updated_at: new Date().toISOString(),
           })
           .eq('id', currentUser.id);
-      } catch (err) {
-        console.error('Failed to update Supabase profile', err);
+        if (error) throw new Error(error.message);
       }
-    }
 
-    setIsSaving(false);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2500);
+      onUpdateUser?.(updated);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2500);
+    } catch (err: any) {
+      console.error('Failed to update profile:', err);
+      setErrorMsg(err?.message || 'Failed to save profile changes.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Create Sticker Pack
-  const handleCreateStickerPack = () => {
-    if (!newPackName.trim()) return;
+  const handleCreateStickerPack = async () => {
+    const name = newPackName.trim();
+    if (!name) return;
+    setErrorMsg(null);
+
+    if (isLiveSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase
+          .from('sticker_packs')
+          .insert({ name, creator_id: currentUser.id })
+          .select('*, stickers(*)')
+          .single();
+        if (error || !data) throw new Error(error?.message || 'Could not create sticker pack');
+        setStickerPacks((prev) => [data as StickerPack, ...prev]);
+        setNewPackName('');
+        setIsCreatingPack(false);
+      } catch (err: any) {
+        setErrorMsg(err?.message || 'Failed to create sticker pack');
+      }
+      return;
+    }
+
     const newPack: StickerPack = {
       id: `pack-${Date.now()}`,
-      name: newPackName.trim(),
+      name,
       creator_id: currentUser.id,
       created_at: new Date().toISOString(),
       stickers: [],
@@ -133,43 +213,72 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
     setIsCreatingPack(false);
   };
 
-  // Delete Sticker Pack (creator can delete their pack without unrequested admin restrictions)
-  const handleDeleteStickerPack = (packId: string) => {
+  // Delete Sticker Pack (creator or admin)
+  const handleDeleteStickerPack = async (packId: string) => {
+    setErrorMsg(null);
+    if (isLiveSupabaseConfigured()) {
+      const { error } = await supabase.from('sticker_packs').delete().eq('id', packId);
+      if (error) {
+        setErrorMsg(error.message || 'Could not delete sticker pack');
+        return;
+      }
+    }
     setStickerPacks((prev) => prev.filter((p) => p.id !== packId));
   };
 
-  // Add Sticker to Pack
-  const handleAddStickerToPack = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Add Sticker to Pack (`stickers` bucket)
+  const handleAddStickerToPack = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !targetPackForSticker) return;
+    e.target.value = '';
+    const packId = targetPackForSticker;
+    setTargetPackForSticker(null);
+    if (!file || !packId) return;
+    setErrorMsg(null);
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const imageUrl = reader.result as string;
-      setStickerPacks((prev) =>
-        prev.map((pack) => {
-          if (pack.id !== targetPackForSticker) return pack;
-          return {
-            ...pack,
-            stickers: [
-              ...(pack.stickers || []),
-              {
-                id: `stk-${Date.now()}`,
-                pack_id: pack.id,
-                image_url: imageUrl,
-                created_at: new Date().toISOString(),
-              },
-            ],
-          };
-        })
-      );
-      setTargetPackForSticker(null);
-    };
-    reader.onerror = (err) => {
-      console.warn('Failed to read sticker file:', err);
-      setTargetPackForSticker(null);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const uploaded = await uploadToSupabaseBucket('stickers', file, {
+        folder: `${currentUser.id}/${packId}`,
+        fileName: file.name,
+        maxBytes: 5 * 1024 * 1024,
+      });
+
+      if (isLiveSupabaseConfigured()) {
+        const { data, error } = await supabase
+          .from('stickers')
+          .insert({ pack_id: packId, image_url: uploaded.publicUrl })
+          .select()
+          .single();
+        if (error || !data) throw new Error(error?.message || 'Failed to save sticker');
+        setStickerPacks((prev) =>
+          prev.map((pack) =>
+            pack.id === packId
+              ? { ...pack, stickers: [...(pack.stickers || []), data] }
+              : pack
+          )
+        );
+      } else {
+        setStickerPacks((prev) =>
+          prev.map((pack) =>
+            pack.id === packId
+              ? {
+                  ...pack,
+                  stickers: [
+                    ...(pack.stickers || []),
+                    {
+                      id: `stk-${Date.now()}`,
+                      pack_id: pack.id,
+                      image_url: uploaded.publicUrl,
+                      created_at: new Date().toISOString(),
+                    },
+                  ],
+                }
+              : pack
+          )
+        );
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to upload sticker.');
+    }
   };
 
   return (
@@ -183,9 +292,7 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
           >
             <ArrowLeft className="w-5 h-5 text-white" />
           </button>
-          <h1 className="text-lg font-bold tracking-tight text-white">
-            Profile & Settings
-          </h1>
+          <h1 className="text-lg font-bold tracking-tight text-white">Profile &amp; Settings</h1>
         </div>
 
         {saveSuccess && (
@@ -197,6 +304,13 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
       </div>
 
       <div className="p-4 space-y-8 max-w-md mx-auto w-full pb-12">
+        {errorMsg && (
+          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* Profile Card & Avatar */}
         <div className="flex flex-col items-center pt-2">
           <div className="relative group mb-3">
@@ -212,10 +326,17 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
 
             <button
               onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingAvatar}
               className="absolute inset-0 rounded-full bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-opacity text-white text-xs font-semibold cursor-pointer"
             >
-              <Camera className="w-6 h-6 mb-1" />
-              <span>Change</span>
+              {isUploadingAvatar ? (
+                <Loader2 className="w-6 h-6 animate-spin" />
+              ) : (
+                <>
+                  <Camera className="w-6 h-6 mb-1" />
+                  <span>Change</span>
+                </>
+              )}
             </button>
             <input
               type="file"
@@ -246,9 +367,7 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-[#A0A0A0] block mb-1">
-              Bio
-            </label>
+            <label className="text-xs font-semibold text-[#A0A0A0] block mb-1">Bio</label>
             <textarea
               rows={2}
               value={bio}
@@ -264,13 +383,13 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
           <button
             onClick={handleSaveProfile}
             disabled={isSaving}
-            className={`w-full py-2.5 rounded-xl font-bold text-sm text-white shadow-lg transition-transform active:scale-95 cursor-pointer ${config.gradientClass}`}
+            className={`w-full py-2.5 rounded-xl font-bold text-sm text-white shadow-lg transition-transform active:scale-95 cursor-pointer disabled:opacity-50 ${config.gradientClass}`}
           >
             {isSaving ? 'Saving...' : 'Save Profile'}
           </button>
         </div>
 
-        {/* Instagram-Dark Accent Theme Selector (5 Options) */}
+        {/* Accent Theme Selector (5 Options) */}
         <div className="space-y-3">
           <div>
             <h2 className="text-sm font-bold text-white flex items-center space-x-1.5">
@@ -306,7 +425,7 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
           </div>
         </div>
 
-        {/* Chat Wallpaper Background Selector */}
+        {/* Chat Wallpaper Selector */}
         <div className="space-y-3">
           <div>
             <h2 className="text-sm font-bold text-white">Chat Wallpaper</h2>
@@ -360,7 +479,6 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
             </button>
           </div>
 
-          {/* New Pack Form */}
           {isCreatingPack && (
             <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-3 space-y-2">
               <input
@@ -387,7 +505,6 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
             </div>
           )}
 
-          {/* Sticker Packs List */}
           <div className="space-y-3">
             {stickerPacks.map((pack) => (
               <div
@@ -404,31 +521,30 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
                   </div>
 
                   <div className="flex items-center space-x-1.5">
-                    <button
-                      onClick={() => {
-                        setTargetPackForSticker(pack.id);
-                        stickerFileInputRef.current?.click();
-                      }}
-                      title="Add Sticker"
-                      className="p-1 rounded bg-[#1E1E1E] hover:bg-[#2A2A2A] text-[#A0A0A0] hover:text-white cursor-pointer"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
-
-                    {/* Delete Pack (Allowed for pack creator) */}
-                    {pack.creator_id === currentUser.id && (
-                      <button
-                        onClick={() => handleDeleteStickerPack(pack.id)}
-                        title="Delete Pack"
-                        className="p-1 rounded bg-[#1E1E1E] hover:bg-red-900/40 text-[#A0A0A0] hover:text-red-400 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                    {(pack.creator_id === currentUser.id || currentUser.role === 'admin') && (
+                      <>
+                        <button
+                          onClick={() => {
+                            setTargetPackForSticker(pack.id);
+                            stickerFileInputRef.current?.click();
+                          }}
+                          title="Add Sticker"
+                          className="p-1 rounded bg-[#1E1E1E] hover:bg-[#2A2A2A] text-[#A0A0A0] hover:text-white cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStickerPack(pack.id)}
+                          title="Delete Pack"
+                          className="p-1 rounded bg-[#1E1E1E] hover:bg-red-900/40 text-[#A0A0A0] hover:text-red-400 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
 
-                {/* Stickers Grid */}
                 <div className="grid grid-cols-4 gap-2 pt-1">
                   {pack.stickers?.map((stk) => (
                     <div
@@ -439,7 +555,9 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
                     </div>
                   ))}
                   {(!pack.stickers || pack.stickers.length === 0) && (
-                    <span className="text-[11px] text-[#555555] col-span-4 italic">No stickers yet. Click + to add.</span>
+                    <span className="text-[11px] text-[#555555] col-span-4 italic">
+                      No stickers yet. Click + to add.
+                    </span>
                   )}
                 </div>
               </div>
@@ -450,7 +568,7 @@ export default function ProfilePage({ currentUser, onBack, onUpdateUser, onSignO
             type="file"
             ref={stickerFileInputRef}
             onChange={handleAddStickerToPack}
-            accept="image/*"
+            accept="image/png,image/webp,image/gif"
             className="hidden"
           />
         </div>

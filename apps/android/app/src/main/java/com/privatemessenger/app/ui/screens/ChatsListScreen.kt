@@ -19,11 +19,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.privatemessenger.app.data.model.Conversation
 import com.privatemessenger.app.data.model.ThemeAccent
+import com.privatemessenger.app.data.model.User
 import com.privatemessenger.app.data.update.InAppUpdateDownloader
 import com.privatemessenger.app.data.update.ReleaseInfo
 import com.privatemessenger.app.ui.theme.*
@@ -32,21 +36,27 @@ import com.privatemessenger.app.ui.theme.*
 @Composable
 fun ChatsListScreen(
     conversations: List<Conversation>,
+    currentUser: User? = null,
     accent: ThemeAccent,
     updateInfo: ReleaseInfo? = null,
     updateDownloadState: InAppUpdateDownloader.DownloadState = InAppUpdateDownloader.DownloadState.Idle,
     onConversationClick: (Conversation) -> Unit,
     onProfileClick: () -> Unit,
-    onNewChatClick: () -> Unit,
+    onNewChatClick: (contactName: String, contactEmail: String) -> Unit,
     onUpdateClick: ((ReleaseInfo) -> Unit)? = null
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    var showNewChatDialog by remember { mutableStateOf(false) }
+    var newContactName by remember { mutableStateOf("") }
+    var newContactEmail by remember { mutableStateOf("") }
 
-    val filteredConversations = remember(searchQuery, conversations) {
+    val filteredConversations = remember(searchQuery, conversations.toList()) {
         if (searchQuery.isBlank()) conversations
         else conversations.filter {
             val title = it.title ?: it.otherUser?.displayName ?: ""
-            title.contains(searchQuery, ignoreCase = true)
+            val preview = it.lastMessage?.content ?: ""
+            title.contains(searchQuery, ignoreCase = true) ||
+                preview.contains(searchQuery, ignoreCase = true)
         }
     }
 
@@ -62,7 +72,7 @@ fun ChatsListScreen(
                     )
                 },
                 actions = {
-                    IconButton(onClick = onNewChatClick) {
+                    IconButton(onClick = { showNewChatDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "New Chat",
@@ -77,12 +87,22 @@ fun ChatsListScreen(
                                 .background(Color(0xFF242424)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Person,
-                                contentDescription = "Profile",
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
+                            val avatar = currentUser?.avatarUrl
+                            if (!avatar.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = avatar,
+                                    contentDescription = "Profile",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = "Profile",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
                     }
                 },
@@ -244,6 +264,62 @@ fun ChatsListScreen(
                 }
             }
         }
+
+        if (showNewChatDialog) {
+            AlertDialog(
+                onDismissRequest = { showNewChatDialog = false },
+                title = { Text("Start New Conversation", color = TextPrimary) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = newContactName,
+                            onValueChange = { newContactName = it },
+                            label = { Text("Friend's Name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = Color(accent.primaryHex)
+                            )
+                        )
+                        OutlinedTextField(
+                            value = newContactEmail,
+                            onValueChange = { newContactEmail = it },
+                            label = { Text("Gmail / Email (optional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = Color(accent.primaryHex)
+                            )
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val name = newContactName.trim().ifBlank { "Friend" }
+                            val email = newContactEmail.trim()
+                            onNewChatClick(name, email)
+                            newContactName = ""
+                            newContactEmail = ""
+                            showNewChatDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(accent.primaryHex))
+                    ) {
+                        Text("Start Chat")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showNewChatDialog = false }) {
+                        Text("Cancel", color = TextMuted)
+                    }
+                },
+                containerColor = SurfaceElevated
+            )
+        }
     }
 }
 
@@ -254,7 +330,15 @@ fun ConversationItem(
     onClick: () -> Unit
 ) {
     val title = conversation.title ?: conversation.otherUser?.displayName ?: "Friend"
-    val lastMsg = conversation.lastMessage?.content ?: "Start a conversation"
+    val lastMsg = when {
+        conversation.lastMessage?.deletedForEveryone == true -> "This message was deleted"
+        conversation.lastMessage?.isViewOnce == true -> {
+            if (conversation.lastMessage.viewedAt != null) "Opened" else "1 Photo • View Once"
+        }
+        !conversation.lastMessage?.content.isNullOrBlank() -> conversation.lastMessage!!.content
+        !conversation.lastMessage?.fileName.isNullOrBlank() -> "📎 ${conversation.lastMessage!!.fileName}"
+        else -> "Start a conversation"
+    }
     val time = conversation.lastMessage?.createdAt ?: "Now"
 
     Row(
@@ -264,7 +348,6 @@ fun ConversationItem(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Avatar with Online Indicator
         Box(contentAlignment = Alignment.BottomEnd) {
             Box(
                 modifier = Modifier
@@ -273,14 +356,23 @@ fun ConversationItem(
                     .background(Color(0xFF242424)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = title.ifBlank { "F" }.take(1).uppercase(),
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp
-                )
+                val avatar = conversation.otherUser?.avatarUrl ?: conversation.avatarUrl
+                if (!avatar.isNullOrBlank()) {
+                    AsyncImage(
+                        model = avatar,
+                        contentDescription = title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    )
+                } else {
+                    Text(
+                        text = title.ifBlank { "F" }.take(1).uppercase(),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    )
+                }
             }
-            // Green online dot
             Box(
                 modifier = Modifier
                     .size(14.dp)
@@ -291,7 +383,6 @@ fun ConversationItem(
 
         Spacer(modifier = Modifier.width(14.dp))
 
-        // Name and Message Preview
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -301,7 +392,9 @@ fun ConversationItem(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary
+                    color = TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = time,
@@ -316,11 +409,11 @@ fun ConversationItem(
                 text = lastMsg,
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
 
-        // Unread Badge if any
         if (conversation.unreadCount > 0) {
             Spacer(modifier = Modifier.width(8.dp))
             Box(

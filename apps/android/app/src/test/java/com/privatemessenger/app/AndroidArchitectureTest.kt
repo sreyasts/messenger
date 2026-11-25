@@ -1,5 +1,6 @@
 package com.privatemessenger.app
 
+import com.privatemessenger.app.data.media.MediaFileInspector
 import com.privatemessenger.app.data.model.*
 import com.privatemessenger.app.data.update.UpdateManager
 import com.privatemessenger.app.webrtc.WebRtcTransferManager
@@ -29,6 +30,52 @@ class AndroidArchitectureTest {
     fun testWebRtc1GBChunkConstants() {
         assertEquals(65536, WebRtcTransferManager.CHUNK_SIZE)
         assertEquals(4 * 1024 * 1024L, WebRtcTransferManager.BUFFER_THRESHOLD)
+        assertEquals(1 * 1024 * 1024L, WebRtcTransferManager.BUFFER_LOW_WATERMARK)
+        assertEquals(1024L * 1024L * 1024L, WebRtcTransferManager.MAX_FILE_SIZE)
+    }
+
+    @Test
+    fun testViewOnceStrictlyImagesOnlyContract() {
+        val photoMsg = Message(
+            id = "vo-img",
+            conversationId = "conv-1",
+            senderId = "u1",
+            mediaUrl = "https://example.supabase.co/storage/v1/object/public/chat-attachments/pic.jpg",
+            mediaType = MediaType.IMAGE,
+            isViewOnce = true
+        )
+        assertTrue("Photo message with isViewOnce=true must be allowed", photoMsg.isPhotoViewOnce)
+
+        val textMsg = Message(
+            id = "vo-txt",
+            conversationId = "conv-1",
+            senderId = "u1",
+            content = "Plain text",
+            mediaType = MediaType.TEXT,
+            isViewOnce = true
+        )
+        assertFalse("Text message must never qualify as View Once photo", textMsg.isPhotoViewOnce)
+
+        val docMsg = Message(
+            id = "vo-doc",
+            conversationId = "conv-1",
+            senderId = "u1",
+            fileName = "report.pdf",
+            mediaType = MediaType.FILE,
+            isViewOnce = true
+        )
+        assertFalse("Document message must never qualify as View Once photo", docMsg.isPhotoViewOnce)
+    }
+
+    @Test
+    fun testMediaFileInspectorSanitizationAndResolution() {
+        assertEquals("my_photo_1.jpg", MediaFileInspector.sanitizeFileName("../my photo (1).jpg"))
+        assertEquals("archive.zip", MediaFileInspector.sanitizeFileName("archive.zip"))
+        assertEquals(MediaType.IMAGE, MediaFileInspector.resolveMediaType("image/jpeg", "photo.jpg"))
+        assertEquals(MediaType.VIDEO, MediaFileInspector.resolveMediaType("video/mp4", "clip.mp4"))
+        assertEquals(MediaType.AUDIO, MediaFileInspector.resolveMediaType("audio/mp4", "voice.m4a"))
+        assertEquals(MediaType.FILE, MediaFileInspector.resolveMediaType("application/pdf", "doc.pdf"))
+        assertEquals("1.0 MB", MediaFileInspector.formatFileSize(1024L * 1024L))
     }
 
     @Test

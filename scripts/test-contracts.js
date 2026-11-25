@@ -11,7 +11,13 @@ const test = require('node:test');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const MIGRATION_PATH = path.join(ROOT_DIR, 'supabase', 'migrations', '20261114000000_init_schema.sql');
+const RLS_FIX_MIGRATION_PATH = path.join(ROOT_DIR, 'supabase', 'migrations', '20261125000000_rls_view_once_calls_fix.sql');
 const LIVEKIT_FUNCTION_PATH = path.join(ROOT_DIR, 'supabase', 'functions', 'livekit-token', 'index.ts');
+const WEB_LIVEKIT_ROUTE_PATH = path.join(ROOT_DIR, 'apps', 'web', 'src', 'app', 'api', 'livekit-token', 'route.ts');
+const WEB_LIVEKIT_MGR_PATH = path.join(ROOT_DIR, 'apps', 'web', 'src', 'lib', 'livekit', 'LiveKitManager.ts');
+const WEB_PAGE_PATH = path.join(ROOT_DIR, 'apps', 'web', 'src', 'app', 'page.tsx');
+const ANDROID_LIVEKIT_MGR_PATH = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'telecom', 'LiveKitCallManager.kt');
+const ANDROID_MAIN_ACTIVITY_PATH = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'MainActivity.kt');
 
 test('Tier 1: Supabase PostgreSQL Schema Contracts', async (t) => {
   assert.ok(fs.existsSync(MIGRATION_PATH), `Migration file must exist at ${MIGRATION_PATH}`);
@@ -191,5 +197,57 @@ test('Tier 2: Boundary & Malformed Input Handling on Edge Function Logic', async
     assert.equal(res.roomName, 'room-101');
     assert.equal(res.participantIdentity, 'user-42');
     assert.equal(res.expiresInSeconds, 14400);
+  });
+});
+
+test('Tier 1 & 3: RLS View-Once Fix Migration & Cross-Platform LiveKit Alignment', async (t) => {
+  await t.test('20261125000000_rls_view_once_calls_fix.sql hardens View-Once, calls, P2P, and Storage RLS', () => {
+    assert.ok(fs.existsSync(RLS_FIX_MIGRATION_PATH), 'RLS fix migration must exist');
+    const fixSql = fs.readFileSync(RLS_FIX_MIGRATION_PATH, 'utf-8');
+
+    assert.match(fixSql, /CREATE POLICY "Participants can mark view-once messages as viewed"/i);
+    assert.match(fixSql, /CREATE OR REPLACE FUNCTION public\.enforce_message_audit_immutability/i);
+    assert.match(fixSql, /NEW\.viewed_at IS NULL/i);
+    assert.match(fixSql, /ADD COLUMN IF NOT EXISTS created_by UUID/i);
+    assert.match(fixSql, /CREATE OR REPLACE FUNCTION public\.can_add_conversation_participant/i);
+    assert.match(fixSql, /CHECK \(file_size > 0 AND file_size <= 1073741824\)/i);
+    assert.match(fixSql, /ALTER TABLE public\.calls REPLICA IDENTITY FULL/i);
+    assert.match(fixSql, /bucket_id IN \('avatars', 'stickers', 'wallpapers'\)/i);
+  });
+
+  await t.test('LiveKit Edge Function, Web route, Web manager, and Android manager align on room & quality contracts', () => {
+    const edgeFn = fs.readFileSync(LIVEKIT_FUNCTION_PATH, 'utf-8');
+    const webRoute = fs.readFileSync(WEB_LIVEKIT_ROUTE_PATH, 'utf-8');
+    const webMgr = fs.readFileSync(WEB_LIVEKIT_MGR_PATH, 'utf-8');
+    const webPage = fs.readFileSync(WEB_PAGE_PATH, 'utf-8');
+    const androidMgr = fs.readFileSync(ANDROID_LIVEKIT_MGR_PATH, 'utf-8');
+    const androidMain = fs.readFileSync(ANDROID_MAIN_ACTIVITY_PATH, 'utf-8');
+
+    assert.match(edgeFn, /canUpdateOwnMetadata:\s*true/);
+    assert.match(webRoute, /canUpdateOwnMetadata:\s*true/);
+    assert.match(webRoute, /14400/);
+
+    // Canonical room naming across Web & Android
+    assert.match(webPage, /`conversation-\$\{activeConversation\.id\}`/);
+    assert.match(androidMain, /"conversation-\$\{activeConv\.id\}"/);
+    assert.match(androidMgr, /"conversation-\$\{call\.conversationId\}"/);
+
+    // High-quality low-latency Web LiveKit config
+    assert.match(webMgr, /adaptiveStream:\s*true/);
+    assert.match(webMgr, /dynacast:\s*true/);
+    assert.match(webMgr, /dtx:\s*false/);
+    assert.match(webMgr, /red:\s*true/);
+    assert.match(webMgr, /echoCancellation:\s*true/);
+    assert.match(webMgr, /noiseSuppression:\s*true/);
+    assert.match(webMgr, /autoGainControl:\s*true/);
+
+    // High-quality low-latency Android LiveKit config
+    assert.match(androidMgr, /adaptiveStream\s*=\s*true/);
+    assert.match(androidMgr, /dynacast\s*=\s*true/);
+    assert.match(androidMgr, /dtx\s*=\s*false/);
+    assert.match(androidMgr, /red\s*=\s*true/);
+    assert.match(androidMgr, /echoCancellation\s*=\s*true/);
+    assert.match(androidMgr, /noiseSuppression\s*=\s*true/);
+    assert.match(androidMgr, /autoGainControl\s*=\s*true/);
   });
 });

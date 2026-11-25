@@ -21,6 +21,7 @@ export interface Conversation {
   type: 'direct' | 'group';
   title?: string | null;
   avatar_url?: string | null;
+  created_by?: string | null;
   created_at: string;
   updated_at: string;
   participants?: ConversationParticipant[];

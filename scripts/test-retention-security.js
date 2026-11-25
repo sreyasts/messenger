@@ -5,8 +5,12 @@
  * Database Retention, and Role-Based Governance Contracts
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
 const assert = require('node:assert/strict');
 const test = require('node:test');
+
+const ROOT_DIR = path.resolve(__dirname, '..');
 
 test('Tier 1 & 3: View Once Media Audit & Retention State Machine', async (t) => {
   // Simulate the message lifecycle for View Once media
@@ -227,5 +231,49 @@ test('Tier 1 & 3: Sticker Pack Role-Based Governance', async (t) => {
 
   await t.test('Admin can delete any sticker pack globally', () => {
     assert.equal(canDeleteStickerPack(userPack, 'admin-mod', true), true);
+  });
+});
+
+test('Tier 1 & 3: Image-Only View Once Enforcement Across Web & Android Source', async (t) => {
+  await t.test('Web MessageComposer & MediaPickerModal forbid View Once on text/non-image messages', () => {
+    const composer = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'web', 'src', 'components', 'MessageComposer.tsx'), 'utf-8');
+    const picker = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'web', 'src', 'components', 'MediaPickerModal.tsx'), 'utf-8');
+    const chatIf = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'web', 'src', 'components', 'ChatInterface.tsx'), 'utf-8');
+    const viewOnceModal = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'web', 'src', 'components', 'ViewOnceModal.tsx'), 'utf-8');
+
+    // Text messages always force is_view_once: false
+    assert.match(composer, /handleSendText[\s\S]*?media_type:\s*'text'[\s\S]*?is_view_once:\s*false/);
+    assert.match(composer, /NO View Once toggle on plain text messages/);
+    // Photo staging is only for mediaType === 'image'
+    assert.match(composer, /if\s*\(mediaType === 'image'\)/);
+    assert.match(composer, /Non-image files \(video, audio, document\) never allow View Once/);
+    // MediaPickerModal only offers View Once on photo tab
+    assert.match(picker, /activeTab === 'photo'/);
+    assert.match(picker, /photoViewOnce/);
+    // ChatInterface gates View Once to image and updates viewed_at without deleting row
+    assert.match(chatIf, /requestedViewOnce && resolvedMediaType === 'image'/);
+    assert.match(chatIf, /\.update\(\{\s*viewed_at:\s*timestamp\s*\}\)/);
+    assert.match(chatIf, /msg\.media_type === 'image'/);
+    // ViewOnceModal renders photos only (no text view-once branch)
+    assert.doesNotMatch(viewOnceModal, /message\.media_type === 'text'/);
+    assert.match(viewOnceModal, /message\.media_type === 'image'/);
+  });
+
+  await t.test('Android ChatDetailScreen, Models, MainActivity, and ViewOnceMediaDialog enforce Image-Only View Once & DB audit', () => {
+    const models = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'model', 'Models.kt'), 'utf-8');
+    const chatDetail = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'ui', 'screens', 'ChatDetailScreen.kt'), 'utf-8');
+    const mainActivity = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'MainActivity.kt'), 'utf-8');
+    const voDialog = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'ui', 'components', 'ViewOnceMediaDialog.kt'), 'utf-8');
+    const syncClient = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'remote', 'SupabaseSyncClient.kt'), 'utf-8');
+
+    assert.match(models, /val isPhotoViewOnce:\s*Boolean[\s\S]*?isViewOnce && mediaType == MediaType\.IMAGE/);
+    assert.match(chatDetail, /onSendMessage:\s*\(content:\s*String,\s*replyTo:\s*Message\?\)\s*->\s*Unit/);
+    assert.match(chatDetail, /val viewOnceAllowed = isImageAttachment && !useP2p/);
+    assert.match(mainActivity, /isViewOnce && inspected\.mediaType == MediaType\.IMAGE && !useP2p/);
+    assert.match(mainActivity, /msg\.isPhotoViewOnce/);
+    assert.match(voDialog, /FLAG_SECURE/);
+    assert.doesNotMatch(voDialog, /Confidential View-Once Message/);
+    assert.match(syncClient, /fun markViewOnceViewed/);
+    assert.match(syncClient, /put\("viewed_at",\s*viewedAtIso\)/);
   });
 });

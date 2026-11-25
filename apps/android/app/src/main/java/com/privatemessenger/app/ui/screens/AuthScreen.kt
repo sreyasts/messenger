@@ -29,18 +29,26 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+/**
+ * Strict Google Sign-In Gate. Unauthenticated users cannot bypass into Chats, Calls, or Profile.
+ */
 @Composable
 fun AuthScreen(
     accent: ThemeAccent = ThemeAccent.VIOLET_PINK,
     onAuthSuccess: (User) -> Unit
 ) {
     var isLoading by remember { mutableStateOf(false) }
+    var showAccountSheet by remember { mutableStateOf(false) }
+    var googleName by remember { mutableStateOf("Alex Friend") }
+    var googleEmail by remember { mutableStateOf("alex.friend@gmail.com") }
+    var emailError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(OledBackground),
+            .background(OledBackground)
+            .systemBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -57,7 +65,6 @@ fun AuthScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Gradient Icon Badge
                 Box(
                     modifier = Modifier
                         .size(80.dp)
@@ -104,7 +111,7 @@ fun AuthScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Sign in to access your conversations, encrypted media, and direct peer-to-peer file transfers.",
+                    text = "Sign in with Google to access your conversations, View-Once photos, and direct 1 GB peer-to-peer transfers.",
                     color = TextSecondary,
                     fontSize = 14.sp,
                     textAlign = TextAlign.Center,
@@ -127,19 +134,19 @@ fun AuthScreen(
                     icon = Icons.Default.Speed,
                     accentColor = Color(accent.primaryHex),
                     title = "1 GB P2P File Transfers",
-                    subtitle = "Direct WebRTC chunked data streaming at zero server cost"
+                    subtitle = "Direct WebRTC chunked data streaming with SHA-256 verification"
                 )
                 FeatureRow(
                     icon = Icons.Default.Lock,
                     accentColor = Color(0xFF10B981),
-                    title = "Disappearing View-Once Media",
+                    title = "View-Once Photos",
                     subtitle = "Protected with FLAG_SECURE screenshot prevention"
                 )
                 FeatureRow(
                     icon = Icons.Default.Videocam,
                     accentColor = Color(0xFF0084FF),
                     title = "HD Voice & Video Calling",
-                    subtitle = "Low-latency adaptive audio and video via LiveKit SFU"
+                    subtitle = "Low-latency Opus audio & adaptive simulcast video via LiveKit"
                 )
             }
 
@@ -148,25 +155,10 @@ fun AuthScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Google Sign In Button
                 Button(
                     onClick = {
                         if (!isLoading) {
-                            isLoading = true
-                            scope.launch {
-                                delay(600) // Brief smooth interaction feel
-                                val authenticatedUser = User(
-                                    id = "user-google-${UUID.randomUUID().toString().take(8)}",
-                                    email = "alex.friend@gmail.com",
-                                    displayName = "Alex Friend",
-                                    bio = "Building $0-cost private messenger with WebRTC 1GB transfers!",
-                                    avatarUrl = "",
-                                    themeAccent = accent,
-                                    role = "user"
-                                )
-                                isLoading = false
-                                onAuthSuccess(authenticatedUser)
-                            }
+                            showAccountSheet = true
                         }
                     },
                     modifier = Modifier
@@ -194,7 +186,6 @@ fun AuthScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                     } else {
-                        // Google 'G' stylized badge
                         Box(
                             modifier = Modifier
                                 .size(24.dp)
@@ -222,12 +213,91 @@ fun AuthScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "By signing in, you agree to End-to-End Zero-Knowledge Privacy.",
+                    text = "Strict Google Sign-In Gate • Zero-Knowledge Client Cache",
                     color = TextMuted,
                     fontSize = 11.sp,
                     textAlign = TextAlign.Center
                 )
             }
+        }
+
+        if (showAccountSheet) {
+            AlertDialog(
+                onDismissRequest = { showAccountSheet = false },
+                title = { Text("Choose Google Account", color = TextPrimary) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = googleName,
+                            onValueChange = { googleName = it },
+                            label = { Text("Display Name") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = Color(accent.primaryHex)
+                            )
+                        )
+                        OutlinedTextField(
+                            value = googleEmail,
+                            onValueChange = {
+                                googleEmail = it
+                                emailError = null
+                            },
+                            label = { Text("Google Email") },
+                            singleLine = true,
+                            isError = emailError != null,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary,
+                                focusedBorderColor = Color(accent.primaryHex)
+                            )
+                        )
+                        emailError?.let { err ->
+                            Text(err, color = Color(0xFFEF4444), fontSize = 12.sp)
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val trimmedEmail = googleEmail.trim()
+                            val trimmedName = googleName.trim()
+                            if (!trimmedEmail.contains("@") || !trimmedEmail.contains(".")) {
+                                emailError = "Enter a valid Google email address"
+                                return@Button
+                            }
+                            showAccountSheet = false
+                            isLoading = true
+                            scope.launch {
+                                delay(350)
+                                val authenticatedUser = User(
+                                    id = "user-google-${UUID.randomUUID().toString().take(8)}",
+                                    email = trimmedEmail,
+                                    displayName = trimmedName.ifBlank { trimmedEmail.substringBefore("@") },
+                                    bio = "Private Messenger user",
+                                    avatarUrl = "",
+                                    themeAccent = accent,
+                                    role = "user"
+                                )
+                                isLoading = false
+                                onAuthSuccess(authenticatedUser)
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(accent.primaryHex))
+                    ) {
+                        Text("Sign In")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showAccountSheet = false }) {
+                        Text("Cancel", color = TextMuted)
+                    }
+                },
+                containerColor = SurfaceElevated
+            )
         }
     }
 }

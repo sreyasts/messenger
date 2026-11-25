@@ -1,17 +1,22 @@
 package com.privatemessenger.app.telecom
 
-import android.app.Notification
-import android.app.PendingIntent
+import android.Manifest
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import com.privatemessenger.app.MainActivity
+import androidx.core.content.ContextCompat
 
 class CallForegroundService : Service() {
+
+    private var currentRoomName: String = "conversation"
+    private var currentCallerName: String = "Friend"
+    private var currentCallType: String = "audio"
+    private var currentCallId: String = ""
+    private var isMuted: Boolean = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -21,22 +26,39 @@ class CallForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        val action = intent.action
-        if (action == "ACTION_DECLINE_CALL") {
-            CallNotificationManager.dismissCallNotification(this)
-            stopSelf()
-            return START_NOT_STICKY
-        } else if (action == "ACTION_END_CALL") {
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            CallNotificationManager.dismissCallNotification(this)
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent.action) {
+            "ACTION_DECLINE_CALL" -> {
+                val callId = intent.getStringExtra("CALL_ID") ?: currentCallId
+                if (callId.isNotBlank()) {
+                    CallStateBus.emit(CallStateBus.Event.DeclineCallRequested(callId))
+                }
+                CallNotificationManager.dismissIncomingCallNotification(this)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            "ACTION_END_CALL" -> {
+                val callId = intent.getStringExtra("CALL_ID") ?: currentCallId
+                CallStateBus.emit(CallStateBus.Event.EndCallRequested(callId.ifBlank { null }))
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                CallNotificationManager.dismissCallNotification(this)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            "ACTION_TOGGLE_MUTE" -> {
+                isMuted = !isMuted
+                CallStateBus.emit(CallStateBus.Event.ToggleMuteRequested)
+                startForegroundServiceWithNotification()
+                return START_NOT_STICKY
+            }
         }
 
-        val roomName = intent.getStringExtra("ROOM_NAME") ?: "Call"
-        val callType = intent.getStringExtra("CALL_TYPE") ?: "audio"
+        currentRoomName = intent.getStringExtra("ROOM_NAME") ?: "conversation"
+        currentCallerName = intent.getStringExtra("CALLER_NAME") ?: "Friend"
+        currentCallType = intent.getStringExtra("CALL_TYPE") ?: "audio"
+        currentCallId = intent.getStringExtra("CALL_ID") ?: ""
+        isMuted = intent.getBooleanExtra("IS_MUTED", false)
 
-        startForegroundServiceWithNotification(roomName, callType)
+        startForegroundServiceWithNotification()
         return START_NOT_STICKY
     }
 
@@ -45,40 +67,36 @@ class CallForegroundService : Service() {
         CallNotificationManager.dismissCallNotification(this)
     }
 
-    private fun startForegroundServiceWithNotification(roomName: String, callType: String) {
-        CallNotificationManager.createNotificationChannels(this)
-
-        val returnIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val returnPendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            returnIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    private fun startForegroundServiceWithNotification() {
+        val notification = CallNotificationManager.buildActiveCallNotification(
+            context = this,
+            callerName = currentCallerName,
+            roomName = currentRoomName,
+            callType = currentCallType,
+            callId = currentCallId,
+            isMuted = isMuted
         )
 
-        val endCallIntent = Intent(this, CallForegroundService::class.java).apply {
-            action = "ACTION_END_CALL"
-        }
-        val endCallPendingIntent = PendingIntent.getService(
-            this,
-            1,
-            endCallIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification: Notification = NotificationCompat.Builder(this, CallNotificationManager.CHANNEL_ID_CALLS)
-            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
-            .setContentTitle("Active ${callType.replaceFirstChar { it.uppercase() }} Call")
-            .setContentText("Connected to $roomName")
-            .setContentIntent(returnPendingIntent)
-            .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "End Call", endCallPendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            var fgsType = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+            if (currentCallType.equals("video", ignoreCase = true) &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+            ) {
+                fgsType = fgsType or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            }
+            try {
+                startForeground(CallNotificationManager.NOTIFICATION_ID_ACTIVE_CALL, notification, fgsType)
+            } catch (_: SecurityException) {
+                startForeground(
+                    CallNotificationManager.NOTIFICATION_ID_ACTIVE_CALL,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                )
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 CallNotificationManager.NOTIFICATION_ID_ACTIVE_CALL,
                 notification,

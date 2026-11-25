@@ -1,5 +1,6 @@
 package com.privatemessenger.app.ui.components
 
+import android.app.Activity
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -8,13 +9,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -23,23 +26,47 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
-import com.privatemessenger.app.data.model.MediaType
+import coil.compose.AsyncImage
 import com.privatemessenger.app.data.model.Message
 
+/**
+ * Protected View-Once Photo viewer enforcing WindowManager.LayoutParams.FLAG_SECURE
+ * on both the Dialog window and host Activity window to block screenshots & screen capture.
+ * View Once is strictly restricted to Images/Photos.
+ */
 @Composable
 fun ViewOnceMediaDialog(
     message: Message,
     onDismiss: () -> Unit,
     onMediaViewed: (messageId: String) -> Unit
 ) {
-    // Immediately mark as viewed upon opening to guarantee persistence
+    val context = LocalContext.current
+    var hasReportedView by remember(message.id) { mutableStateOf(false) }
+
+    // Capture the ephemeral image URI before parent clears local cache on viewedAt update
+    val initialPhotoSource = remember(message.id) {
+        message.localUri.ifBlank { message.mediaUrl }
+    }
+    val initialCaption = remember(message.id) { message.content }
+
+    // Immediately mark as viewed once upon opening so persistence is guaranteed
     LaunchedEffect(message.id) {
-        onMediaViewed(message.id)
+        if (!hasReportedView) {
+            hasReportedView = true
+            onMediaViewed(message.id)
+        }
     }
 
+    // Also protect the underlying Activity window while View Once photo is visible
     DisposableEffect(message.id) {
+        val activity = context as? Activity
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         onDispose {
-            onMediaViewed(message.id)
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            if (!hasReportedView) {
+                hasReportedView = true
+                onMediaViewed(message.id)
+            }
         }
     }
 
@@ -51,7 +78,6 @@ fun ViewOnceMediaDialog(
             usePlatformDefaultWidth = false
         )
     ) {
-        // Enforce FLAG_SECURE on the dialog window to block screenshots & screen recording
         val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
         SideEffect {
             dialogWindow?.setFlags(
@@ -69,28 +95,27 @@ fun ViewOnceMediaDialog(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .systemBarsPadding()
                     .padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 // Top Bar
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 16.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Lock,
-                            contentDescription = "View Once",
+                            contentDescription = "View Once Photo",
                             tint = Color(0xFFE1306C),
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "View Once (Protected)",
+                            text = "View Once Photo • Protected",
                             color = Color.White,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
@@ -106,112 +131,76 @@ fun ViewOnceMediaDialog(
                     }
                 }
 
-                // Media / Text Content Section
-                val isTextMessage = message.mediaType == MediaType.TEXT && message.mediaUrl.isBlank()
-
-                if (isTextMessage) {
-                    // View-Once Text Message Presentation
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .padding(vertical = 24.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color(0xFF141414))
-                            .border(1.dp, Color(0xFF2A2A2A), RoundedCornerShape(20.dp))
-                            .padding(24.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+                // View-Once Photo Viewport
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(vertical = 16.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(Color(0xFF121212))
+                        .border(1.dp, Color(0xFF242424), RoundedCornerShape(20.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (initialPhotoSource.isNotBlank() && !initialPhotoSource.startsWith("sample://")) {
+                        AsyncImage(
+                            model = initialPhotoSource,
+                            contentDescription = "View Once Photo",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(20.dp))
+                        )
+                    } else {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
+                            modifier = Modifier.padding(24.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(52.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(18.dp))
                                     .background(Color(0xFFE1306C).copy(alpha = 0.15f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.VisibilityOff,
-                                    contentDescription = "Disappearing Text",
+                                    imageVector = Icons.Default.Photo,
+                                    contentDescription = "View Once Photo",
                                     tint = Color(0xFFE1306C),
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(38.dp)
                                 )
                             }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            Text(
-                                text = "Confidential View-Once Message",
-                                color = Color(0xFFA0A0A0),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(20.dp))
-
-                            Text(
-                                text = message.content,
-                                color = Color.White,
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Normal,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 32.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            Text(
-                                text = "This message will be permanently deleted once dismissed.",
-                                color = Color(0xFFEF4444),
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                } else {
-                    // Photo / Video View-Once Presentation
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(Color(0xFF121212))
-                            .border(1.dp, Color(0xFF242424), RoundedCornerShape(20.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = Color(0xFFA0A0A0),
-                                modifier = Modifier.size(64.dp)
-                            )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = if (message.mediaType == MediaType.VIDEO) "1 Video • View Once" else "1 Photo • View Once",
+                                text = "1 Photo • View Once",
                                 color = Color.White,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
-                            if (message.content.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = message.content,
-                                    color = Color(0xFFCCCCCC),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 24.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Screenshots and screen recording are strictly blocked.",
+                                text = "Screenshots and screen recording are blocked with FLAG_SECURE.",
                                 color = Color(0xFFA0A0A0),
-                                style = MaterialTheme.typography.bodyMedium
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+
+                    if (initialCaption.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .background(Color.Black.copy(alpha = 0.7f))
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = initialCaption,
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
                     }
@@ -223,8 +212,8 @@ fun ViewOnceMediaDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Once you close this screen, this media transitions to 'Opened' permanently.",
-                        color = Color(0xFF666666),
+                        text = "Once closed, this photo locks to 'Opened' permanently.",
+                        color = Color(0xFF888888),
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(bottom = 12.dp)

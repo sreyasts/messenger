@@ -45,6 +45,20 @@ enum class CallStatus(val key: String) {
     MISSED("missed")
 }
 
+enum class AudioRoute {
+    EARPIECE,
+    SPEAKER,
+    BLUETOOTH,
+    WIRED_HEADSET
+}
+
+enum class CallQuality(val label: String) {
+    EXCELLENT("HD • Low Latency"),
+    GOOD("Good"),
+    POOR("Weak Network"),
+    CONNECTING("Connecting...")
+}
+
 data class User(
     val id: String = UUID.randomUUID().toString(),
     val email: String,
@@ -80,6 +94,14 @@ data class Message(
     val mediaType: MediaType = MediaType.TEXT,
     val fileName: String = "",
     val fileSize: Long = 0L,
+    val mimeType: String = "",
+    val localUri: String = "",
+    val fileHashSha256: String = "",
+    val isP2pTransfer: Boolean = false,
+    val transferId: String? = null,
+    val transferStatus: P2PTransferStatus? = null,
+    val transferProgress: Int = 0,
+    val audioDurationSec: Int = 0,
     val isViewOnce: Boolean = false,
     val viewedAt: String? = null,
     val replyToId: String? = null,
@@ -91,7 +113,10 @@ data class Message(
     val createdAt: String = "",
     val senderName: String = "",
     val reactions: List<Reaction> = emptyList()
-)
+) {
+    val isPhotoViewOnce: Boolean
+        get() = isViewOnce && mediaType == MediaType.IMAGE
+}
 
 data class Reaction(
     val id: String = UUID.randomUUID().toString(),

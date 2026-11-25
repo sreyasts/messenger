@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -24,29 +25,33 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.privatemessenger.app.MainActivity
+import com.privatemessenger.app.data.model.CallStatus
+import com.privatemessenger.app.data.remote.SupabaseSyncClient
 import com.privatemessenger.app.ui.theme.OledBackground
 import com.privatemessenger.app.ui.theme.PrivateMessengerTheme
 import com.privatemessenger.app.ui.theme.TextPrimary
 import com.privatemessenger.app.ui.theme.TextSecondary
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class IncomingCallActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Wake screen and show over lock screen
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
-            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
-            keyguardManager.requestDismissKeyguard(this, null)
+            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            keyguardManager?.requestDismissKeyguard(this, null)
         } else {
             @Suppress("DEPRECATION")
             window.addFlags(
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
-                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
 
@@ -54,8 +59,22 @@ class IncomingCallActivity : ComponentActivity() {
         val callType = intent.getStringExtra("CALL_TYPE") ?: "audio"
         val roomName = intent.getStringExtra("ROOM_NAME") ?: ""
         val callId = intent.getStringExtra("CALL_ID") ?: ""
+        val conversationId = intent.getStringExtra("CONVERSATION_ID") ?: "conv-call"
+
+        val handleDecline = {
+            if (callId.isNotBlank()) {
+                CallStateBus.emit(CallStateBus.Event.DeclineCallRequested(callId))
+                CoroutineScope(Dispatchers.IO).launch {
+                    SupabaseSyncClient.updateCallStatus(null, callId, CallStatus.DECLINED)
+                }
+            }
+            CallNotificationManager.dismissIncomingCallNotification(this)
+            finish()
+        }
 
         setContent {
+            BackHandler { handleDecline() }
+
             PrivateMessengerTheme {
                 IncomingCallContent(
                     callerName = callerName,
@@ -64,18 +83,17 @@ class IncomingCallActivity : ComponentActivity() {
                         val mainIntent = Intent(this, MainActivity::class.java).apply {
                             action = "ACTION_ANSWER_CALL"
                             putExtra("CALL_ID", callId)
+                            putExtra("CONVERSATION_ID", conversationId)
+                            putExtra("CALLER_NAME", callerName)
                             putExtra("ROOM_NAME", roomName)
                             putExtra("CALL_TYPE", callType)
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                         }
                         startActivity(mainIntent)
-                        CallNotificationManager.dismissCallNotification(this)
+                        CallNotificationManager.dismissIncomingCallNotification(this)
                         finish()
                     },
-                    onDecline = {
-                        CallNotificationManager.dismissCallNotification(this)
-                        finish()
-                    }
+                    onDecline = handleDecline
                 )
             }
         }
@@ -108,7 +126,7 @@ fun IncomingCallContent(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = callerName.take(1).uppercase(),
+                    text = callerName.ifBlank { "F" }.take(1).uppercase(),
                     color = Color.White,
                     fontSize = 44.sp
                 )
@@ -117,7 +135,7 @@ fun IncomingCallContent(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = callerName,
+                text = callerName.ifBlank { "Friend" },
                 style = MaterialTheme.typography.headlineMedium,
                 color = TextPrimary
             )
@@ -137,7 +155,6 @@ fun IncomingCallContent(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Decline Button
                 FloatingActionButton(
                     onClick = onDecline,
                     containerColor = Color(0xFFEF4444),
@@ -152,7 +169,6 @@ fun IncomingCallContent(
                     )
                 }
 
-                // Answer Button
                 FloatingActionButton(
                     onClick = onAnswer,
                     containerColor = Color(0xFF10B981),
@@ -161,7 +177,7 @@ fun IncomingCallContent(
                     modifier = Modifier.size(72.dp)
                 ) {
                     Icon(
-                        imageVector = if (callType == "video") Icons.Default.Videocam else Icons.Default.Call,
+                        imageVector = if (callType.equals("video", ignoreCase = true)) Icons.Default.Videocam else Icons.Default.Call,
                         contentDescription = "Answer Call",
                         modifier = Modifier.size(32.dp)
                     )

@@ -11,8 +11,10 @@ import {
   ArrowDownLeft,
   FileCode,
   Download,
+  Check,
 } from 'lucide-react';
 import { P2PTransferMetadata, TransferProgress } from '@/lib/webrtc/p2pTransfer';
+import { formatFileSize } from '@/lib/supabase/storage';
 
 interface P2PTransferModalProps {
   isOpen: boolean;
@@ -23,6 +25,9 @@ interface P2PTransferModalProps {
   fileSize?: number;
   metadata?: P2PTransferMetadata | null;
   progress?: TransferProgress | null | any;
+  isIncomingRequest?: boolean;
+  onAcceptRequest?: () => void;
+  onRejectRequest?: () => void;
   onPause?: () => void;
   onResume?: () => void;
   onCancel?: () => void;
@@ -38,6 +43,9 @@ export default function P2PTransferModal({
   fileSize,
   metadata,
   progress,
+  isIncomingRequest = false,
+  onAcceptRequest,
+  onRejectRequest,
   onPause,
   onResume,
   onCancel,
@@ -48,21 +56,17 @@ export default function P2PTransferModal({
   const effectiveIsSender = isSender !== undefined ? isSender : transferType === 'sender';
   const resolvedFileName = fileName || metadata?.fileName || 'P2P_File';
   const resolvedFileSize = fileSize || metadata?.fileSize || 0;
-  const resolvedHash = metadata?.fileHashSha256 || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+  const resolvedHash = metadata?.fileHashSha256 || '';
 
   const percentage =
     typeof progress?.percentage === 'number' && !Number.isNaN(progress.percentage)
       ? progress.percentage
       : 0;
-  const speedMb = progress?.speedBytesPerSec
-    ? (progress.speedBytesPerSec / (1024 * 1024)).toFixed(1)
-    : '0.0';
-  const transferredMb = progress?.bytesTransferred
-    ? (progress.bytesTransferred / (1024 * 1024)).toFixed(1)
-    : '0.0';
-  const totalMb = resolvedFileSize
-    ? (resolvedFileSize / (1024 * 1024)).toFixed(1)
-    : '0.0';
+  const speedFormatted = progress?.speedBytesPerSec
+    ? `${formatFileSize(progress.speedBytesPerSec)}/s`
+    : '0 B/s';
+  const transferredFormatted = formatFileSize(progress?.bytesTransferred || 0);
+  const totalFormatted = formatFileSize(resolvedFileSize);
 
   const isCompleted = progress?.status === 'completed';
   const isFailed = progress?.status === 'failed';
@@ -98,6 +102,8 @@ export default function P2PTransferModal({
               <h3 className="text-sm font-semibold text-white">
                 {effectiveIsSender
                   ? 'Direct WebRTC 1 GB Sender'
+                  : isIncomingRequest
+                  ? 'Incoming P2P File Transfer'
                   : 'Direct WebRTC 1 GB Receiver'}
               </h3>
               <p className="text-[11px] text-[#A0A0A0]">
@@ -125,45 +131,54 @@ export default function P2PTransferModal({
               {resolvedFileName}
             </p>
             <p className="text-[11px] text-[#888888]">
-              {totalMb} MB • {metadata?.fileType || 'Binary Data'}
+              {totalFormatted} • {metadata?.fileType || 'Binary Data'}
             </p>
           </div>
         </div>
 
         {/* Progress Metrics & Bar */}
-        <div className="space-y-2">
-          <div className="flex justify-between items-baseline text-xs">
-            <span className="font-semibold text-white text-base">
-              {percentage}%
-            </span>
-            <span className="text-[#A0A0A0]">
-              {transferredMb} MB / {totalMb} MB
-            </span>
-          </div>
+        {!isIncomingRequest && (
+          <div className="space-y-2">
+            <div className="flex justify-between items-baseline text-xs">
+              <span className="font-semibold text-white text-base">
+                {percentage}%
+              </span>
+              <span className="text-[#A0A0A0]">
+                {transferredFormatted} / {totalFormatted}
+              </span>
+            </div>
 
-          <div className="w-full h-2.5 rounded-full bg-[#242424] overflow-hidden p-0.5">
-            <div
-              className={`h-full rounded-full transition-all duration-200 ${
-                isFailed || isCancelled
-                  ? 'bg-red-500'
-                  : isCompleted
-                  ? 'bg-emerald-500'
-                  : 'bg-gradient-to-r from-[#8A2387] via-[#E1306C] to-[#0084FF]'
-              }`}
-              style={{ width: `${percentage}%` }}
-            />
-          </div>
+            <div className="w-full h-2.5 rounded-full bg-[#242424] overflow-hidden p-0.5">
+              <div
+                className={`h-full rounded-full transition-all duration-200 ${
+                  isFailed || isCancelled
+                    ? 'bg-red-500'
+                    : isCompleted
+                    ? 'bg-emerald-500'
+                    : 'bg-gradient-to-r from-[#8A2387] via-[#E1306C] to-[#0084FF]'
+                }`}
+                style={{ width: `${percentage}%` }}
+              />
+            </div>
 
-          <div className="flex justify-between text-[11px] text-[#888888]">
-            <span>
-              Status:{' '}
-              <strong className="text-white capitalize">
-                {progress?.status || 'Connecting'}
-              </strong>
-            </span>
-            <span>Speed: {speedMb} MB/s</span>
+            <div className="flex justify-between text-[11px] text-[#888888]">
+              <span>
+                Status:{' '}
+                <strong className="text-white capitalize">
+                  {progress?.status || 'Connecting'}
+                </strong>
+              </span>
+              <span>Speed: {speedFormatted}</span>
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Error Details if Failed */}
+        {isFailed && progress?.errorMessage && (
+          <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+            {progress.errorMessage}
+          </div>
+        )}
 
         {/* SHA-256 Verification Badge */}
         <div
@@ -182,55 +197,89 @@ export default function P2PTransferModal({
           )}
           <span className="truncate font-mono text-[10px]">
             {isCompleted
-              ? `SHA-256 Verified: ${resolvedHash.slice(0, 16)}...`
+              ? `SHA-256 Verified: ${resolvedHash ? `${resolvedHash.slice(0, 16)}...` : 'Matched'}`
               : isFailed
               ? 'SHA-256 Integrity Check Failed'
-              : `Target SHA-256: ${resolvedHash.slice(0, 12)}...`}
+              : resolvedHash
+              ? `Target SHA-256: ${resolvedHash.slice(0, 16)}...`
+              : 'Computing SHA-256 checksum...'}
           </span>
         </div>
 
         {/* Controls Dock */}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#222222]">
-          {isCompleted && !effectiveIsSender && onDownloadFile && (
-            <button
-              type="button"
-              onClick={onDownloadFile}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0084FF] text-white text-xs font-semibold hover:bg-blue-600 transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              <span>Save File</span>
-            </button>
-          )}
-
-          {!isCompleted && !isFailed && !isCancelled && (
+          {isIncomingRequest ? (
             <>
-              {isPaused ? (
+              <button
+                type="button"
+                onClick={onRejectRequest || onClose}
+                className="px-3.5 py-2 rounded-xl text-red-400 hover:bg-red-500/10 text-xs font-medium transition-colors"
+              >
+                Decline
+              </button>
+              <button
+                type="button"
+                onClick={onAcceptRequest}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0084FF] text-white text-xs font-semibold hover:bg-blue-600 transition-colors"
+              >
+                <Check className="w-4 h-4" />
+                <span>Accept &amp; Receive</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {isCompleted && !effectiveIsSender && onDownloadFile && (
                 <button
                   type="button"
-                  onClick={onResume}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#222222] hover:bg-[#2A2A2A] text-white text-xs font-medium transition-colors"
+                  onClick={onDownloadFile}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0084FF] text-white text-xs font-semibold hover:bg-blue-600 transition-colors"
                 >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Resume</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onPause}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#222222] hover:bg-[#2A2A2A] text-white text-xs font-medium transition-colors"
-                >
-                  <Pause className="w-3.5 h-3.5 fill-current" />
-                  <span>Pause</span>
+                  <Download className="w-4 h-4" />
+                  <span>Save File</span>
                 </button>
               )}
 
-              <button
-                type="button"
-                onClick={onCancel || onClose}
-                className="px-3 py-2 rounded-xl text-red-400 hover:bg-red-500/10 text-xs font-medium transition-colors"
-              >
-                Cancel
-              </button>
+              {!isCompleted && !isFailed && !isCancelled && (
+                <>
+                  {isPaused ? (
+                    <button
+                      type="button"
+                      onClick={onResume}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#222222] hover:bg-[#2A2A2A] text-white text-xs font-medium transition-colors"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                      <span>Resume</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onPause}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#222222] hover:bg-[#2A2A2A] text-white text-xs font-medium transition-colors"
+                    >
+                      <Pause className="w-3.5 h-3.5 fill-current" />
+                      <span>Pause</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={onCancel || onClose}
+                    className="px-3 py-2 rounded-xl text-red-400 hover:bg-red-500/10 text-xs font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+
+              {(isCompleted || isFailed || isCancelled) && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3.5 py-2 rounded-xl bg-[#222222] hover:bg-[#2A2A2A] text-white text-xs font-medium transition-colors"
+                >
+                  Close
+                </button>
+              )}
             </>
           )}
         </div>

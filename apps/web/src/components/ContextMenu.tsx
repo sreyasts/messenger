@@ -16,7 +16,7 @@ interface ContextMenuProps {
   onCopy?: (text: string) => void;
   onDeleteForMe: (messageId: string) => void;
   onDeleteForEveryone: (messageId: string) => void;
-  onOpenMoreEmojis?: () => void;
+  onOpenMoreEmojis?: (message: Message) => void;
 }
 
 const QUICK_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
@@ -42,14 +42,22 @@ export default function ContextMenu({
   const effectiveUserId = currentUserId || currentUser?.id;
   const isSender = isOwn !== undefined ? isOwn : message.sender_id === effectiveUserId;
 
-  // Clamped position calculation
   const [adjustedPos, setAdjustedPos] = useState(position);
 
   useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  useEffect(() => {
     if (!menuRef.current) return;
-    const menuWidth = 240;
-    const menuHeight = 280;
-    const padding = 16;
+    const rect = menuRef.current.getBoundingClientRect();
+    const menuWidth = rect.width || 240;
+    const menuHeight = rect.height || 260;
+    const padding = 12;
 
     let x = position.x;
     let y = position.y;
@@ -61,21 +69,33 @@ export default function ContextMenu({
       y = window.innerHeight - menuHeight - padding;
     }
     setAdjustedPos({ x: Math.max(padding, x), y: Math.max(padding, y) });
-  }, [position]);
+  }, [position, showConfirmDeleteEveryone]);
 
   const handleCopy = async () => {
     const textToCopy = message.content || '';
-    if (textToCopy) {
-      if (onCopy) {
-        onCopy(textToCopy);
-      } else {
+    if (!textToCopy) return;
+    try {
+      if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(textToCopy);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = textToCopy;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
       }
       setCopied(true);
       setTimeout(() => {
         setCopied(false);
+        onCopy?.(textToCopy);
         onClose();
-      }, 700);
+      }, 350);
+    } catch {
+      onCopy?.(textToCopy);
+      onClose();
     }
   };
 
@@ -91,35 +111,38 @@ export default function ContextMenu({
         className="fixed z-50 w-60 rounded-2xl bg-[#141414] border border-[#2A2A2A] shadow-2xl overflow-hidden animate-pop-in"
       >
         {/* Quick Emoji Reaction Bar */}
-        <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#242424] bg-[#1A1A1A]">
-          {QUICK_EMOJIS.map((emoji) => (
+        {!message.deleted_for_everyone && (
+          <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#242424] bg-[#1A1A1A]">
+            {QUICK_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => {
+                  onReact(message.id, emoji);
+                  onClose();
+                }}
+                className="text-lg hover:scale-125 active:scale-95 transition-transform"
+              >
+                {emoji}
+              </button>
+            ))}
             <button
-              key={emoji}
               type="button"
               onClick={() => {
-                onReact(message.id, emoji);
+                onOpenMoreEmojis?.(message);
                 onClose();
               }}
-              className="text-lg hover:scale-125 active:scale-95 transition-transform"
+              className="w-6 h-6 rounded-full bg-[#2A2A2A] text-[#A0A0A0] hover:text-white flex items-center justify-center text-xs font-bold"
+              title="More emojis"
             >
-              {emoji}
+              +
             </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => {
-              onOpenMoreEmojis?.();
-              onClose();
-            }}
-            className="w-6 h-6 rounded-full bg-[#2A2A2A] text-[#A0A0A0] hover:text-white flex items-center justify-center text-xs font-bold"
-          >
-            +
-          </button>
-        </div>
+          </div>
+        )}
 
         {/* Action Items List */}
         <div className="p-1.5 flex flex-col gap-0.5">
-          {message.content && !message.deleted_for_everyone && (
+          {message.content && !message.deleted_for_everyone && !message.is_view_once && (
             <button
               type="button"
               onClick={handleCopy}
@@ -130,7 +153,7 @@ export default function ContextMenu({
               ) : (
                 <Copy className="w-4 h-4 text-[#A0A0A0]" />
               )}
-              <span>{copied ? 'Copied to Clipboard!' : 'Copy Text'}</span>
+              <span>{copied ? 'Copied!' : 'Copy Text'}</span>
             </button>
           )}
 

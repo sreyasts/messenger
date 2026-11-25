@@ -22,6 +22,7 @@ class AuthSessionManager(context: Context) {
         private const val KEY_BIO = "bio"
         private const val KEY_AVATAR_URL = "avatar_url"
         private const val KEY_THEME_ACCENT = "theme_accent"
+        private const val KEY_CHAT_BACKGROUND_URL = "chat_background_url"
         private const val KEY_ROLE = "role"
     }
 
@@ -44,6 +45,7 @@ class AuthSessionManager(context: Context) {
         val bio = prefs.getString(KEY_BIO, "") ?: ""
         val avatarUrl = prefs.getString(KEY_AVATAR_URL, "") ?: ""
         val accentKey = prefs.getString(KEY_THEME_ACCENT, "violet-pink") ?: "violet-pink"
+        val chatBackgroundUrl = prefs.getString(KEY_CHAT_BACKGROUND_URL, "") ?: ""
         val role = prefs.getString(KEY_ROLE, "user") ?: "user"
 
         return User(
@@ -53,6 +55,7 @@ class AuthSessionManager(context: Context) {
             bio = bio,
             avatarUrl = avatarUrl,
             themeAccent = ThemeAccent.fromKey(accentKey),
+            chatBackgroundUrl = chatBackgroundUrl,
             role = role
         )
     }
@@ -69,8 +72,9 @@ class AuthSessionManager(context: Context) {
             .putString(KEY_BIO, user.bio)
             .putString(KEY_AVATAR_URL, user.avatarUrl)
             .putString(KEY_THEME_ACCENT, user.themeAccent.key)
+            .putString(KEY_CHAT_BACKGROUND_URL, user.chatBackgroundUrl)
             .putString(KEY_ROLE, user.role)
-            .apply()
+            .commit()
     }
 
     /**

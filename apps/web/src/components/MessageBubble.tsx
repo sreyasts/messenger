@@ -1,11 +1,8 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
-  Check,
   CheckCheck,
-  Clock,
-  Sparkles,
   Ban,
   Reply,
   Play,
@@ -14,9 +11,11 @@ import {
   Download,
   Flame,
   CheckCircle2,
+  Eye,
 } from 'lucide-react';
-import { Message, Reaction, User } from '@/types/database';
+import { Message, User } from '@/types/database';
 import { useTheme } from '@/lib/theme/ThemeContext';
+import { downloadFileUrl, formatFileSize } from '@/lib/supabase/storage';
 
 interface MessageBubbleProps {
   message: Message;
@@ -27,14 +26,23 @@ interface MessageBubbleProps {
   isLastInGroup?: boolean;
   showAvatar?: boolean;
   showSenderName?: boolean;
+  isHighlighted?: boolean;
   onReply?: (message: Message) => void;
   onOpenContextMenu?: (message: Message, e: React.MouseEvent | React.TouchEvent) => void;
   onContextMenu?: (e: React.MouseEvent | React.TouchEvent, message: Message) => void;
   onAddReaction?: (messageId: string, emoji: string) => void;
   onReact?: (messageId: string, emoji: string) => void;
   onOpenViewOnce?: (message: Message) => void;
+  onOpenImage?: (message: Message) => void;
   onOpenP2PHUD?: (transferId: string) => void;
   onScrollToMessage?: (messageId: string) => void;
+}
+
+function formatAudioSeconds(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 export default function MessageBubble({
@@ -46,12 +54,14 @@ export default function MessageBubble({
   isLastInGroup = true,
   showAvatar = false,
   showSenderName = false,
+  isHighlighted = false,
   onReply,
   onOpenContextMenu,
   onContextMenu,
   onAddReaction,
   onReact,
   onOpenViewOnce,
+  onOpenImage,
   onOpenP2PHUD,
   onScrollToMessage,
 }: MessageBubbleProps) {
@@ -64,17 +74,16 @@ export default function MessageBubble({
   const [touchStartY, setTouchStartY] = useState<number | null>(null);
   const [swipeOffset, setSwipeOffset] = useState<number>(0);
   const isSwiping = useRef(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Long-press timer state
-  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
-
-  // Voice note audio playback state
+  // Voice note / audio playback state
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
+  const [audioError, setAudioError] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Format timestamp (e.g. 10:45 AM)
   const formatTime = (isoString?: string) => {
     if (!isoString) return '';
     try {
@@ -170,22 +179,38 @@ export default function MessageBubble({
     isSwiping.current = false;
   };
 
-  const handleAudioToggle = () => {
+  const handleAudioToggle = async () => {
     if (!audioRef.current) return;
+    setAudioError(false);
     if (isPlayingAudio) {
       audioRef.current.pause();
       setIsPlayingAudio(false);
     } else {
-      audioRef.current.play();
-      setIsPlayingAudio(true);
+      try {
+        await audioRef.current.play();
+        setIsPlayingAudio(true);
+      } catch {
+        setIsPlayingAudio(false);
+        setAudioError(true);
+      }
     }
   };
 
   const handleAudioTimeUpdate = () => {
     if (!audioRef.current) return;
     const current = audioRef.current.currentTime;
-    const total = audioRef.current.duration || 1;
-    setAudioProgress((current / total) * 100);
+    const total = audioRef.current.duration || audioDuration || 1;
+    setAudioCurrentTime(current);
+    setAudioProgress(Math.min(100, (current / total) * 100));
+  };
+
+  const handleAudioSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || !audioRef.current.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audioRef.current.currentTime = ratio * audioRef.current.duration;
+    setAudioCurrentTime(audioRef.current.currentTime);
+    setAudioProgress(ratio * 100);
   };
 
   const getCornerRounding = () => {
@@ -204,9 +229,10 @@ export default function MessageBubble({
 
   return (
     <div
+      id={`msg-${message.id}`}
       className={`group relative flex w-full mb-1 select-none transition-transform ${
         isOutgoing ? 'justify-end' : 'justify-start'
-      }`}
+      } ${isHighlighted ? 'animate-highlight-pulse rounded-2xl' : ''}`}
       style={{
         transform: swipeOffset > 0 ? `translateX(${Math.min(swipeOffset * 0.7, 70)}px)` : undefined,
       }}
@@ -228,8 +254,8 @@ export default function MessageBubble({
         </div>
       )}
 
-      {/* Receiver avatar */}
-      {!isOutgoing && showAvatar && (
+      {/* Receiver avatar (or spacer to keep grouped bubbles aligned) */}
+      {!isOutgoing && showAvatar ? (
         <div className="mr-2 flex-shrink-0 self-end mb-1">
           {message.sender?.avatar_url ? (
             <img
@@ -243,7 +269,9 @@ export default function MessageBubble({
             </div>
           )}
         </div>
-      )}
+      ) : !isOutgoing ? (
+        <div className="w-9 flex-shrink-0" />
+      ) : null}
 
       <div className="flex flex-col max-w-[82%] sm:max-w-[70%]">
         {/* Sender name for group chats */}
@@ -261,12 +289,12 @@ export default function MessageBubble({
               : isOutgoing
               ? config.bubbleClass
               : 'bg-[#1E1E1E] text-white border border-[#2A2A2A]'
-          }`}
+          } ${isHighlighted ? 'ring-2 ring-[#E1306C]' : ''}`}
         >
           {/* Quote Block for Replies */}
           {message.reply_to && !message.deleted_for_everyone && (
             <div
-              onClick={() => onScrollToMessage?.(message.reply_to_id!)}
+              onClick={() => message.reply_to_id && onScrollToMessage?.(message.reply_to_id)}
               className={`mb-2 p-2 rounded-lg text-xs cursor-pointer border-l-2 ${
                 isOutgoing
                   ? 'bg-black/25 border-white/70 text-white/90 hover:bg-black/35'
@@ -277,8 +305,10 @@ export default function MessageBubble({
                 {message.reply_to.sender?.display_name || 'Replied Message'}
               </div>
               <div className="line-clamp-1 opacity-80">
-                {message.reply_to.is_view_once
-                  ? 'View Once Media'
+                {message.reply_to.deleted_for_everyone
+                  ? 'This message was deleted'
+                  : message.reply_to.is_view_once
+                  ? 'View Once Photo'
                   : message.reply_to.content ||
                     (message.reply_to.media_type !== 'text'
                       ? `[${message.reply_to.media_type}]`
@@ -294,32 +324,29 @@ export default function MessageBubble({
               <span>This message was deleted</span>
             </div>
           ) : message.is_view_once ? (
-            /* View Once Media Pill */
+            /* View Once Photo Pill (strictly images only, single clean Opened state) */
             <div className="py-1">
               {message.viewed_at ? (
-                <div className="flex items-center gap-2 py-1.5 px-3 rounded-full bg-white/10 text-white/60 text-xs font-medium cursor-not-allowed">
-                  <CheckCircle2 className="w-4 h-4 text-white/50" />
+                <div className="inline-flex items-center gap-2 py-1.5 px-3 rounded-full bg-white/10 text-white/65 text-xs font-medium cursor-default">
+                  <CheckCircle2 className="w-4 h-4 text-white/55" />
                   <span>Opened</span>
+                </div>
+              ) : isOutgoing ? (
+                <div className="inline-flex items-center gap-2 py-1.5 px-3 rounded-full bg-white/15 text-white/90 text-xs font-medium cursor-default">
+                  <Eye className="w-3.5 h-3.5 text-white/80" />
+                  <span>Photo</span>
+                  <span className="w-4 h-4 rounded-full border border-white/60 flex items-center justify-center text-[10px] font-bold">
+                    1
+                  </span>
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => onOpenViewOnce?.(message)}
-                  className={`flex items-center gap-2 py-2 px-3.5 rounded-full text-xs font-semibold shadow-md active:scale-95 transition-all ${
-                    isOutgoing
-                      ? 'bg-white/20 text-white hover:bg-white/30'
-                      : 'bg-gradient-to-r from-[#8A2387] via-[#E1306C] to-[#F27121] text-white hover:opacity-95 ring-2 ring-[#FF4D94]/50'
-                  }`}
+                  className="flex items-center gap-2 py-2 px-3.5 rounded-full text-xs font-semibold shadow-md active:scale-95 transition-all bg-gradient-to-r from-[#8A2387] via-[#E1306C] to-[#F27121] text-white hover:opacity-95 ring-2 ring-[#FF4D94]/50"
                 >
                   <Flame className="w-4 h-4 animate-pulse text-amber-300" />
-                  <span>
-                    View{' '}
-                    {message.media_type === 'video'
-                      ? 'Video'
-                      : message.media_type === 'text'
-                      ? 'Message'
-                      : 'Photo'}
-                  </span>
+                  <span>View Photo</span>
                   <span className="w-4 h-4 rounded-full border border-white/60 flex items-center justify-center text-[10px]">
                     1
                   </span>
@@ -331,34 +358,63 @@ export default function MessageBubble({
             <>
               {/* Media: Image */}
               {message.media_type === 'image' && message.media_url && (
-                <div className="mb-1.5 -mx-1 -mt-1 overflow-hidden rounded-xl">
+                <div className="relative group/media mb-1.5 -mx-1 -mt-1 overflow-hidden rounded-xl bg-black/30">
                   <img
                     src={message.media_url}
-                    alt={message.file_name || 'Image'}
+                    alt={message.file_name || 'Photo'}
                     loading="lazy"
+                    onClick={() => onOpenImage?.(message)}
                     className="max-h-72 w-full object-cover rounded-xl cursor-pointer hover:opacity-95 transition-opacity"
                   />
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      downloadFileUrl(message.media_url!, message.file_name || 'photo.jpg');
+                    }}
+                    className="absolute bottom-2 right-2 p-1.5 rounded-full bg-black/65 text-white opacity-0 group-hover/media:opacity-100 transition-opacity hover:bg-black/85"
+                    title="Download photo"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               )}
 
               {/* Media: Video */}
               {message.media_type === 'video' && message.media_url && (
-                <div className="mb-1.5 -mx-1 -mt-1 overflow-hidden rounded-xl bg-black">
+                <div className="relative mb-1.5 -mx-1 -mt-1 overflow-hidden rounded-xl bg-black">
                   <video
                     src={message.media_url}
                     controls
+                    playsInline
                     preload="metadata"
                     className="max-h-72 w-full rounded-xl"
                   />
+                  <div className="flex items-center justify-between px-2 py-1 text-[10px] text-white/70 bg-black/60">
+                    <span className="truncate max-w-[180px]">
+                      {message.file_name || 'Video'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadFileUrl(message.media_url!, message.file_name || 'video.mp4')
+                      }
+                      className="flex items-center gap-1 hover:text-white"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Save</span>
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {/* Media: Voice Note */}
+              {/* Media: Voice Note / Audio */}
               {message.media_type === 'audio' && message.media_url && (
-                <div className="flex items-center gap-2.5 py-1 min-w-[200px]">
+                <div className="flex items-center gap-2.5 py-1 min-w-[215px]">
                   <audio
                     ref={audioRef}
                     src={message.media_url}
+                    preload="metadata"
                     onTimeUpdate={handleAudioTimeUpdate}
                     onLoadedMetadata={() =>
                       setAudioDuration(audioRef.current?.duration || 0)
@@ -366,6 +422,11 @@ export default function MessageBubble({
                     onEnded={() => {
                       setIsPlayingAudio(false);
                       setAudioProgress(0);
+                      setAudioCurrentTime(0);
+                    }}
+                    onError={() => {
+                      setIsPlayingAudio(false);
+                      setAudioError(true);
                     }}
                   />
                   <button
@@ -374,6 +435,7 @@ export default function MessageBubble({
                     className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-transform active:scale-90 ${
                       isOutgoing ? 'bg-white text-black' : 'bg-[#E1306C] text-white'
                     }`}
+                    title={isPlayingAudio ? 'Pause' : 'Play'}
                   >
                     {isPlayingAudio ? (
                       <Pause className="w-4 h-4 fill-current" />
@@ -382,22 +444,37 @@ export default function MessageBubble({
                     )}
                   </button>
 
-                  <div className="flex-1 flex flex-col gap-1">
-                    <div className="relative w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
+                  <div className="flex-1 flex flex-col gap-1 min-w-0">
+                    <div
+                      onClick={handleAudioSeek}
+                      className="relative w-full h-2 bg-white/20 rounded-full overflow-hidden cursor-pointer"
+                      title="Seek"
+                    >
                       <div
-                        className="h-full bg-white rounded-full transition-all"
+                        className="h-full bg-white rounded-full transition-all duration-75"
                         style={{ width: `${audioProgress}%` }}
                       />
                     </div>
-                    <div className="flex justify-between text-[10px] text-white/70">
+                    <div className="flex justify-between items-center text-[10px] text-white/75 gap-2">
                       <span>
-                        {isPlayingAudio && audioRef.current
-                          ? `${Math.floor(audioRef.current.currentTime)}s`
+                        {audioError
+                          ? 'Playback error'
+                          : isPlayingAudio
+                          ? `${formatAudioSeconds(audioCurrentTime)} / ${formatAudioSeconds(audioDuration)}`
                           : audioDuration
-                          ? `${Math.floor(audioDuration)}s`
+                          ? formatAudioSeconds(audioDuration)
                           : 'Voice Note'}
                       </span>
-                      <span>Audio</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadFileUrl(message.media_url!, message.file_name || 'audio.webm')
+                        }
+                        className="hover:text-white flex items-center gap-1 truncate max-w-[110px]"
+                        title="Download audio"
+                      >
+                        <Download className="w-3 h-3 flex-shrink-0" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -425,9 +502,9 @@ export default function MessageBubble({
                 </div>
               )}
 
-              {/* Media: Document File */}
+              {/* Media: Document / P2P File */}
               {message.media_type === 'file' && (
-                <div className="flex items-center gap-3 p-2 rounded-xl bg-black/25 mb-1.5 border border-white/10">
+                <div className="flex items-center gap-3 p-2.5 rounded-xl bg-black/25 mb-1.5 border border-white/10 min-w-[200px]">
                   <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
                     <FileText className="w-5 h-5 text-white/90" />
                   </div>
@@ -435,29 +512,28 @@ export default function MessageBubble({
                     <p className="text-xs font-semibold text-white truncate">
                       {message.file_name || 'Document'}
                     </p>
-                    <p className="text-[10px] text-white/60">
-                      {message.file_size
-                        ? `${(message.file_size / (1024 * 1024)).toFixed(1)} MB`
-                        : 'File'}
+                    <p className="text-[10px] text-white/65">
+                      {message.file_size ? formatFileSize(message.file_size) : 'File'}
                     </p>
                   </div>
                   {message.media_url ? (
-                    <a
-                      href={message.media_url}
-                      download={message.file_name || 'download'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-1.5 rounded-full hover:bg-white/20 text-white/80 transition-colors"
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadFileUrl(message.media_url!, message.file_name || 'download')
+                      }
+                      className="p-2 rounded-full hover:bg-white/20 text-white/85 transition-colors"
+                      title="Download file"
                     >
                       <Download className="w-4 h-4" />
-                    </a>
+                    </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => onOpenP2PHUD?.(message.id)}
-                      className="text-[11px] font-semibold text-[#0084FF] underline"
+                      className="text-[11px] font-semibold text-[#38A9FF] hover:underline flex-shrink-0"
                     >
-                      P2P Sync
+                      P2P Info
                     </button>
                   )}
                 </div>

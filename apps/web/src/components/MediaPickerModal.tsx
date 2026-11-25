@@ -1,16 +1,32 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Search, Smile, Film, Sticker as StickerIcon, Loader2 } from 'lucide-react';
+import {
+  X,
+  Search,
+  Smile,
+  Film,
+  Sticker as StickerIcon,
+  Image as ImageIcon,
+  Upload,
+  Send,
+  Loader2,
+} from 'lucide-react';
 import { searchGifs, GifItem } from '@/lib/gifs/tenor';
+import { supabase, isLiveSupabaseConfigured } from '@/lib/supabase/client';
+import { formatFileSize, MAX_SUPABASE_STORAGE_BYTES } from '@/lib/supabase/storage';
+
+export type MediaPickerTab = 'emoji' | 'gif' | 'sticker' | 'photo';
 
 interface MediaPickerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialTab?: 'emoji' | 'gif' | 'sticker';
+  initialTab?: MediaPickerTab;
+  reactionOnly?: boolean;
   onSelectEmoji: (emoji: string) => void;
   onSelectGif: (gif: GifItem) => void;
   onSelectSticker: (stickerUrl: string) => void;
+  onSelectPhoto?: (file: File, options: { isViewOnce: boolean; caption: string }) => Promise<void> | void;
 }
 
 const EMOJI_CATEGORIES = [
@@ -56,25 +72,69 @@ export default function MediaPickerModal({
   isOpen,
   onClose,
   initialTab = 'emoji',
+  reactionOnly = false,
   onSelectEmoji,
   onSelectGif,
   onSelectSticker,
+  onSelectPhoto,
 }: MediaPickerModalProps) {
-  const [activeTab, setActiveTab] = useState<'emoji' | 'gif' | 'sticker'>(initialTab);
+  const [activeTab, setActiveTab] = useState<MediaPickerTab>(initialTab);
   const [searchQuery, setSearchQuery] = useState('');
   const [gifs, setGifs] = useState<GifItem[]>([]);
   const [isSearchingGifs, setIsSearchingGifs] = useState(false);
+  const [customStickers, setCustomStickers] = useState<string[]>([]);
 
-  // In-memory query preview cache for GIF queries
+  // Image/Photo attachment preview state (View Once is ONLY allowed here for images)
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoViewOnce, setPhotoViewOnce] = useState(false);
+  const [photoCaption, setPhotoCaption] = useState('');
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [isSendingPhoto, setIsSendingPhoto] = useState(false);
+
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const gifCache = useRef<Record<string, GifItem[]>>({});
 
   useEffect(() => {
-    setActiveTab(initialTab);
-  }, [initialTab]);
+    if (isOpen) {
+      setActiveTab(reactionOnly ? 'emoji' : initialTab);
+      setSearchQuery('');
+      setPhotoError(null);
+    } else {
+      if (photoPreviewUrl) {
+        URL.revokeObjectURL(photoPreviewUrl);
+      }
+      setSelectedPhotoFile(null);
+      setPhotoPreviewUrl(null);
+      setPhotoViewOnce(false);
+      setPhotoCaption('');
+      setPhotoError(null);
+      setIsSendingPhoto(false);
+    }
+  }, [isOpen, initialTab, reactionOnly]);
+
+  // Load community & user stickers from Supabase when live
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'sticker' || !isLiveSupabaseConfigured()) return;
+    let active = true;
+    supabase
+      .from('stickers')
+      .select('image_url')
+      .order('created_at', { ascending: false })
+      .limit(30)
+      .then(({ data }) => {
+        if (active && data) {
+          setCustomStickers(data.map((s: any) => s.image_url).filter(Boolean));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen, activeTab]);
 
   // Debounced GIF search with query preview caching
   useEffect(() => {
-    if (activeTab !== 'gif') return;
+    if (!isOpen || activeTab !== 'gif') return;
     const query = searchQuery.trim();
 
     if (gifCache.current[query]) {
@@ -84,16 +144,66 @@ export default function MediaPickerModal({
 
     const timer = setTimeout(async () => {
       setIsSearchingGifs(true);
-      const results = await searchGifs(query);
-      gifCache.current[query] = results;
-      setGifs(results);
-      setIsSearchingGifs(false);
+      try {
+        const results = await searchGifs(query);
+        gifCache.current[query] = results;
+        setGifs(results);
+      } catch {
+        setGifs([]);
+      } finally {
+        setIsSearchingGifs(false);
+      }
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, activeTab]);
+  }, [searchQuery, activeTab, isOpen]);
+
+  const handlePhotoChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoError(null);
+
+    const isImage =
+      file.type.startsWith('image/') ||
+      /\.(png|jpe?g|webp|gif|heic|heif|avif)$/i.test(file.name);
+    if (!isImage) {
+      setPhotoError('Please choose a valid image file (PNG, JPG, WEBP, GIF).');
+      e.target.value = '';
+      return;
+    }
+
+    if (file.size > MAX_SUPABASE_STORAGE_BYTES) {
+      setPhotoError('Photo exceeds 50 MB storage limit. Send files > 50 MB via P2P attachment.');
+      e.target.value = '';
+      return;
+    }
+
+    if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+    setSelectedPhotoFile(file);
+    setPhotoPreviewUrl(URL.createObjectURL(file));
+    setPhotoViewOnce(false);
+    e.target.value = '';
+  };
+
+  const handleConfirmSendPhoto = async () => {
+    if (!selectedPhotoFile || !onSelectPhoto || isSendingPhoto) return;
+    setIsSendingPhoto(true);
+    setPhotoError(null);
+    try {
+      await onSelectPhoto(selectedPhotoFile, {
+        isViewOnce: photoViewOnce,
+        caption: photoViewOnce ? '' : photoCaption.trim(),
+      });
+      onClose();
+    } catch (err: any) {
+      setPhotoError(err?.message || 'Failed to upload photo. Please try again.');
+      setIsSendingPhoto(false);
+    }
+  };
 
   if (!isOpen) return null;
+
+  const stickerGallery = Array.from(new Set([...customStickers, ...DEFAULT_STICKERS]));
 
   return (
     <div
@@ -106,44 +216,64 @@ export default function MediaPickerModal({
       >
         {/* Modal Header & Tabs */}
         <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#242424]">
-          <div className="flex gap-1 p-1 bg-[#1A1A1A] rounded-xl border border-[#2A2A2A]">
-            <button
-              type="button"
-              onClick={() => setActiveTab('emoji')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'emoji'
-                  ? 'bg-[#2A2A2A] text-white shadow'
-                  : 'text-[#A0A0A0] hover:text-white'
-              }`}
-            >
-              <Smile className="w-3.5 h-3.5" />
-              <span>Emoji</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('gif')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'gif'
-                  ? 'bg-[#2A2A2A] text-white shadow'
-                  : 'text-[#A0A0A0] hover:text-white'
-              }`}
-            >
-              <Film className="w-3.5 h-3.5" />
-              <span>GIFs</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('sticker')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeTab === 'sticker'
-                  ? 'bg-[#2A2A2A] text-white shadow'
-                  : 'text-[#A0A0A0] hover:text-white'
-              }`}
-            >
-              <StickerIcon className="w-3.5 h-3.5" />
-              <span>Stickers</span>
-            </button>
-          </div>
+          {reactionOnly ? (
+            <div className="text-xs font-semibold text-white px-2 py-1.5">
+              Choose Reaction
+            </div>
+          ) : (
+            <div className="flex gap-1 p-1 bg-[#1A1A1A] rounded-xl border border-[#2A2A2A]">
+              <button
+                type="button"
+                onClick={() => setActiveTab('emoji')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'emoji'
+                    ? 'bg-[#2A2A2A] text-white shadow'
+                    : 'text-[#A0A0A0] hover:text-white'
+                }`}
+              >
+                <Smile className="w-3.5 h-3.5" />
+                <span>Emoji</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('gif')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'gif'
+                    ? 'bg-[#2A2A2A] text-white shadow'
+                    : 'text-[#A0A0A0] hover:text-white'
+                }`}
+              >
+                <Film className="w-3.5 h-3.5" />
+                <span>GIFs</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('sticker')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'sticker'
+                    ? 'bg-[#2A2A2A] text-white shadow'
+                    : 'text-[#A0A0A0] hover:text-white'
+                }`}
+              >
+                <StickerIcon className="w-3.5 h-3.5" />
+                <span>Stickers</span>
+              </button>
+              {onSelectPhoto && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('photo')}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    activeTab === 'photo'
+                      ? 'bg-[#2A2A2A] text-white shadow'
+                      : 'text-[#A0A0A0] hover:text-white'
+                  }`}
+                >
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  <span>Photo</span>
+                </button>
+              )}
+            </div>
+          )}
 
           <button
             type="button"
@@ -219,7 +349,7 @@ export default function MediaPickerModal({
               {isSearchingGifs ? (
                 <div className="flex flex-col items-center justify-center py-20 text-[#888888] gap-2">
                   <Loader2 className="w-6 h-6 animate-spin text-[#E1306C]" />
-                  <span className="text-xs">Searching Tenor...</span>
+                  <span className="text-xs">Searching GIFs...</span>
                 </div>
               ) : gifs.length === 0 ? (
                 <div className="text-center py-20 text-xs text-[#888888]">
@@ -257,9 +387,9 @@ export default function MediaPickerModal({
                 Custom Sticker Packs
               </div>
               <div className="grid grid-cols-3 gap-3">
-                {DEFAULT_STICKERS.map((url, i) => (
+                {stickerGallery.map((url, i) => (
                   <button
-                    key={i}
+                    key={`${url}-${i}`}
                     type="button"
                     onClick={() => {
                       onSelectSticker(url);
@@ -275,6 +405,111 @@ export default function MediaPickerModal({
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* TAB 4: PHOTO ATTACHMENT WITH VIEW-ONCE ("1") TOGGLE (IMAGE ONLY) */}
+          {activeTab === 'photo' && onSelectPhoto && (
+            <div className="h-full flex flex-col justify-between gap-3">
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handlePhotoChosen}
+              />
+
+              {photoError && (
+                <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+                  {photoError}
+                </div>
+              )}
+
+              {!selectedPhotoFile || !photoPreviewUrl ? (
+                <button
+                  type="button"
+                  onClick={() => photoInputRef.current?.click()}
+                  className="flex-1 rounded-2xl border-2 border-dashed border-[#2E2E2E] hover:border-[#E1306C] bg-[#161616] flex flex-col items-center justify-center gap-3 p-6 transition-colors"
+                >
+                  <div className="w-14 h-14 rounded-2xl bg-[#222222] flex items-center justify-center text-[#E1306C]">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-semibold text-white">Select Photo to Send</p>
+                    <p className="text-xs text-[#888888] mt-1">
+                      Supports standard photos or View Once (1) photos up to 50 MB
+                    </p>
+                  </div>
+                </button>
+              ) : (
+                <div className="flex-1 flex flex-col gap-3 min-h-0">
+                  <div className="relative flex-1 rounded-2xl overflow-hidden bg-black border border-[#2A2A2A] flex items-center justify-center min-h-0">
+                    <img
+                      src={photoPreviewUrl}
+                      alt={selectedPhotoFile.name}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
+                        setSelectedPhotoFile(null);
+                        setPhotoPreviewUrl(null);
+                        setPhotoViewOnce(false);
+                      }}
+                      className="absolute top-2 right-2 p-1.5 rounded-full bg-black/70 text-white hover:bg-black"
+                      title="Remove photo"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-full bg-black/70 text-[10px] text-white/90">
+                      {selectedPhotoFile.name} • {formatFileSize(selectedPhotoFile.size)}
+                    </div>
+                  </div>
+
+                  {/* Caption + View Once ("1") Toggle strictly for this Image */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPhotoViewOnce((prev) => !prev)}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all ${
+                        photoViewOnce
+                          ? 'bg-gradient-to-tr from-[#E1306C] to-[#F27121] border-transparent text-white shadow-lg'
+                          : 'bg-[#1A1A1A] border-[#2A2A2A] text-[#A0A0A0] hover:text-white'
+                      }`}
+                      title="Toggle View Once Photo"
+                    >
+                      <span className="w-4 h-4 rounded-full border-2 border-current border-dashed flex items-center justify-center text-[9px] font-bold">
+                        1
+                      </span>
+                      <span>{photoViewOnce ? 'View Once On' : 'View Once'}</span>
+                    </button>
+
+                    <input
+                      type="text"
+                      value={photoCaption}
+                      onChange={(e) => setPhotoCaption(e.target.value)}
+                      disabled={photoViewOnce}
+                      placeholder={photoViewOnce ? 'Captions disabled for View Once' : 'Add a caption...'}
+                      className="flex-1 bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl px-3 py-2 text-xs text-white placeholder-[#666666] outline-none disabled:opacity-50"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={handleConfirmSendPhoto}
+                      disabled={isSendingPhoto}
+                      className="px-3.5 py-2 rounded-xl bg-gradient-to-tr from-[#8A2387] via-[#E94057] to-[#F27121] text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {isSendingPhoto ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Send className="w-4 h-4" />
+                      )}
+                      <span>Send</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

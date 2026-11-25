@@ -5,9 +5,13 @@
  * Backpressure Flow Control, and Cryptographic SHA-256 Integrity Verification
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
 const crypto = require('node:crypto');
 const assert = require('node:assert/strict');
 const test = require('node:test');
+
+const ROOT_DIR = path.resolve(__dirname, '..');
 
 const CHUNK_SIZE = 64 * 1024; // 64 KB
 const BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB
@@ -248,5 +252,41 @@ test('Tier 4: WebRTC DataChannel End-to-End Streaming & Flow Control Simulation'
     const reassembled = Buffer.concat(sentChunks);
     assert.equal(reassembled.length, originalData.length);
     assert.equal(computeSha256(reassembled), expectedHash);
+  });
+});
+
+test('Tier 1 & 3: Cross-Platform Web & Android P2P + Storage Source Alignment', async (t) => {
+  await t.test('Web p2pTransfer.ts, storage.ts, and ChatInterface.tsx match Android WebRtcTransferManager.kt & MediaFileInspector.kt', () => {
+    const webP2p = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'web', 'src', 'lib', 'webrtc', 'p2pTransfer.ts'), 'utf-8');
+    const webStorage = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'web', 'src', 'lib', 'supabase', 'storage.ts'), 'utf-8');
+    const webChat = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'web', 'src', 'components', 'ChatInterface.tsx'), 'utf-8');
+    const androidP2p = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'webrtc', 'WebRtcTransferManager.kt'), 'utf-8');
+    const androidInspector = fs.readFileSync(path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'media', 'MediaFileInspector.kt'), 'utf-8');
+
+    // Web & Android P2P constants, ICE candidate queuing, and framing
+    assert.match(webP2p, /CHUNK_SIZE\s*=\s*64\s*\*\s*1024/);
+    assert.match(webP2p, /BUFFER_HIGH_WATERMARK\s*=\s*4\s*\*\s*1024\s*\*\s*1024/);
+    assert.match(webP2p, /BUFFER_LOW_WATERMARK\s*=\s*1\s*\*\s*1024\s*\*\s*1024/);
+    assert.match(webP2p, /pendingIceCandidates/);
+    assert.match(webP2p, /createDataChannel\('p2p-file-transfer'/);
+
+    assert.match(androidP2p, /CHUNK_SIZE\s*=\s*64\s*\*\s*1024/);
+    assert.match(androidP2p, /BUFFER_THRESHOLD\s*=\s*4\s*\*\s*1024\s*\*\s*1024L/);
+    assert.match(androidP2p, /BUFFER_LOW_WATERMARK\s*=\s*1\s*\*\s*1024\s*\*\s*1024L/);
+    assert.match(androidP2p, /pendingIceCandidates/);
+    assert.match(androidP2p, /createDataChannel\("p2p-file-transfer"/);
+    assert.match(androidP2p, /p2p_offer/);
+    assert.match(androidP2p, /p2p_answer/);
+    assert.match(androidP2p, /p2p_ice/);
+
+    // Real Supabase Storage <= 50 MB + real WebRTC ChatInterface wiring
+    assert.match(webStorage, /MAX_SUPABASE_STORAGE_BYTES\s*=\s*50\s*\*\s*1024\s*\*\s*1024/);
+    assert.match(webStorage, /sanitizeFileName/);
+    assert.match(webChat, /uploadToSupabaseBucket\('chat-attachments'/);
+    assert.match(webChat, /new P2PFileSender/);
+    assert.match(webChat, /new P2PFileReceiver/);
+    assert.match(webChat, /chat:p2p:\$\{conversation\.id\}/);
+    assert.match(androidInspector, /MAX_SUPABASE_STORAGE_BYTES\s*=\s*50L\s*\*\s*1024L\s*\*\s*1024L/);
+    assert.match(androidInspector, /MAX_P2P_FILE_BYTES\s*=\s*1024L\s*\*\s*1024L\s*\*\s*1024L/);
   });
 });

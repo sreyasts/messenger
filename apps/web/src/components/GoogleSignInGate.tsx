@@ -1,17 +1,41 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase, isLiveSupabaseConfigured } from '@/lib/supabase/client';
 import { User } from '@/types/database';
 import { Shield, Zap, Video, Lock, Sparkles, AlertCircle } from 'lucide-react';
 
 interface GoogleSignInGateProps {
   onDemoSignIn?: (user: User) => void;
+  externalError?: string | null;
 }
 
-export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps) {
+export default function GoogleSignInGate({ onDemoSignIn, externalError = null }: GoogleSignInGateProps) {
   const [isLoading, setIsLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(externalError);
+
+  useEffect(() => {
+    if (externalError) {
+      setErrorMessage(externalError);
+    }
+  }, [externalError]);
+
+  // Surface OAuth redirect errors returned in URL query/hash
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const errDesc =
+        searchParams.get('error_description') ||
+        hashParams.get('error_description') ||
+        searchParams.get('error') ||
+        hashParams.get('error');
+      if (errDesc) {
+        setErrorMessage(errDesc);
+      }
+    } catch {}
+  }, []);
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
@@ -23,6 +47,10 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           provider: 'google',
           options: {
             redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'select_account',
+            },
           },
         });
 
@@ -30,7 +58,7 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           throw error;
         }
       } else {
-        // Simulated Google OAuth session when offline / demo environment
+        // Offline / Demo fallback when Supabase env vars are not configured
         const simulatedUser: User = {
           id: 'user-google-demo',
           email: 'alex.morgan@gmail.com',
@@ -45,7 +73,6 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           updated_at: new Date().toISOString(),
         };
 
-        // Persist demo session to localStorage so refreshes keep user signed in
         if (typeof window !== 'undefined') {
           try {
             localStorage.setItem('messenger_demo_session', JSON.stringify(simulatedUser));
@@ -54,13 +81,11 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           }
         }
 
-        if (onDemoSignIn) {
-          onDemoSignIn(simulatedUser);
-        }
+        onDemoSignIn?.(simulatedUser);
       }
     } catch (err: any) {
       console.error('Google Sign-In failed:', err);
-      setErrorMessage(err.message || 'Failed to complete Google Sign-In. Please try again.');
+      setErrorMessage(err?.message || 'Failed to complete Google Sign-In. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -68,12 +93,9 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
 
   return (
     <div className="min-h-screen w-full bg-[#000000] text-white flex flex-col items-center justify-center p-4 relative overflow-hidden select-none">
-      {/* Background Ambient Glow */}
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-gradient-to-tr from-[#8A2387]/20 via-[#E1306C]/20 to-[#F27121]/20 rounded-full blur-[120px] pointer-events-none" />
 
-      {/* Main Glass Card */}
       <div className="w-full max-w-md bg-[#121212]/90 border border-[#2A2A2A] rounded-3xl p-8 backdrop-blur-xl shadow-2xl relative z-10 flex flex-col items-center text-center">
-        {/* Glowing App Icon */}
         <div className="relative mb-6">
           <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-[#8A2387] via-[#E1306C] to-[#F27121] p-0.5 shadow-xl shadow-[#E1306C]/30 flex items-center justify-center">
             <div className="w-full h-full bg-[#000000] rounded-[14px] flex items-center justify-center">
@@ -85,20 +107,18 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           </div>
         </div>
 
-        {/* Brand Titles */}
         <h1 className="text-3xl font-extrabold tracking-tight text-white mb-2">
           Private Messenger
         </h1>
         <p className="text-sm text-[#A0A0A0] leading-relaxed mb-8 max-w-xs">
-          Sign in with your Google account to unlock private messaging, 1 GB P2P chunk transfers, and LiveKit audio & video calls.
+          Sign in with your Google account to unlock private messaging, 1 GB P2P chunk transfers, and LiveKit audio &amp; video calls.
         </p>
 
-        {/* Feature Highlights Grid */}
         <div className="w-full grid grid-cols-3 gap-2.5 mb-8 text-left">
           <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-3 flex flex-col items-center text-center">
             <Shield className="w-5 h-5 text-[#10B981] mb-1.5" />
             <span className="text-[11px] font-semibold text-white">View Once</span>
-            <span className="text-[9px] text-[#777777]">Self-destructing</span>
+            <span className="text-[9px] text-[#777777]">Photo privacy</span>
           </div>
 
           <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-3 flex flex-col items-center text-center">
@@ -114,7 +134,6 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           </div>
         </div>
 
-        {/* Error Alert */}
         {errorMessage && (
           <div className="w-full mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center space-x-2 text-left">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -122,14 +141,12 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           </div>
         )}
 
-        {/* Google Sign-In Button */}
         <button
           type="button"
           onClick={handleGoogleSignIn}
           disabled={isLoading}
           className="w-full py-3.5 px-6 rounded-2xl bg-white hover:bg-neutral-100 text-black font-semibold text-sm flex items-center justify-center space-x-3 transition-transform active:scale-95 shadow-xl hover:shadow-white/10 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
-          {/* Multicolored Google "G" SVG Icon */}
           <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
             <path
               fill="#4285F4"
@@ -151,9 +168,8 @@ export default function GoogleSignInGate({ onDemoSignIn }: GoogleSignInGateProps
           <span>{isLoading ? 'Connecting with Google...' : 'Sign in with Google'}</span>
         </button>
 
-        {/* Security & Free-Tier Note */}
         <p className="mt-5 text-[11px] text-[#666666]">
-          Protected by Google OAuth 2.0 & Supabase Auth.
+          Protected by Google OAuth 2.0 &amp; Supabase Auth.
           <br />
           No password stored. End-to-end encrypted sessions.
         </p>

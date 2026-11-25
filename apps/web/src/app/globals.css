@@ -44,21 +44,25 @@ body {
 }
 
 /* Custom dark scrollbar matching OLED #000000 theme */
-::-webkit-scrollbar {
+::-webkit-scrollbar,
+.custom-dark-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar-track,
+.custom-dark-scrollbar::-webkit-scrollbar-track {
   background: #000000;
 }
 
-::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb,
+.custom-dark-scrollbar::-webkit-scrollbar-thumb {
   background: #2A2A2A;
   border-radius: 9999px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover,
+.custom-dark-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #3A3A3A;
 }
 
@@ -100,6 +104,11 @@ body {
   100% { transform: translateY(0); }
 }
 
+@keyframes highlightPulse {
+  0% { background-color: rgba(225, 48, 108, 0.28); }
+  100% { background-color: transparent; }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.2s ease-out forwards;
 }
@@ -110,4 +119,8 @@ body {
 
 .animate-slide-up {
   animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-highlight-pulse {
+  animation: highlightPulse 1.6s ease-out forwards;
 }

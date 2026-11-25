@@ -12,13 +12,22 @@ android {
         applicationId = "com.privatemessenger.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        val supabaseUrl = System.getenv("NEXT_PUBLIC_SUPABASE_URL") ?: ""
+        val supabaseAnonKey = System.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") ?: ""
+        val livekitUrl = System.getenv("NEXT_PUBLIC_LIVEKIT_URL") ?: ""
+        val googleClientId = System.getenv("GOOGLE_SERVER_CLIENT_ID") ?: ""
+        buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+        buildConfigField("String", "LIVEKIT_URL", "\"$livekitUrl\"")
+        buildConfigField("String", "GOOGLE_SERVER_CLIENT_ID", "\"$googleClientId\"")
     }
 
     buildTypes {
@@ -64,6 +73,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("io.livekit:livekit-android:2.14.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")

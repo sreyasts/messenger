@@ -1,10 +1,16 @@
 package com.privatemessenger.app.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -17,16 +23,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.privatemessenger.app.data.model.Sticker
+import coil.compose.AsyncImage
+import com.privatemessenger.app.BuildConfig
+import com.privatemessenger.app.data.media.MediaFileInspector
 import com.privatemessenger.app.data.model.StickerPack
 import com.privatemessenger.app.data.model.ThemeAccent
 import com.privatemessenger.app.data.model.User
 import com.privatemessenger.app.data.update.InAppUpdateDownloader
 import com.privatemessenger.app.data.update.ReleaseInfo
 import com.privatemessenger.app.ui.theme.*
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,9 +48,11 @@ fun ProfileScreen(
     wallpaper: String,
     onBack: () -> Unit,
     onUpdateProfile: (displayName: String, bio: String) -> Unit,
+    onUpdateAvatar: (avatarUri: String) -> Unit = {},
     onUpdateAccent: (ThemeAccent) -> Unit,
     onUpdateWallpaper: (String) -> Unit,
     onCreateStickerPack: (name: String) -> Unit,
+    onAddStickerToPack: (packId: String, imageUri: String) -> Unit = { _, _ -> },
     onDeleteStickerPack: (String) -> Unit,
     onSignOut: () -> Unit = {},
     updateInfo: ReleaseInfo? = null,
@@ -47,12 +60,45 @@ fun ProfileScreen(
     onCheckForUpdates: () -> Unit = {},
     onUpdateClick: ((ReleaseInfo) -> Unit)? = null
 ) {
-    var displayName by remember { mutableStateOf(currentUser.displayName) }
-    var bio by remember { mutableStateOf(currentUser.bio) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var displayName by remember(currentUser.displayName) { mutableStateOf(currentUser.displayName) }
+    var bio by remember(currentUser.bio) { mutableStateOf(currentUser.bio) }
     var isEditing by remember { mutableStateOf(false) }
 
     var newPackName by remember { mutableStateOf("") }
     var showNewPackDialog by remember { mutableStateOf(false) }
+    var targetPackForSticker by remember { mutableStateOf<String?>(null) }
+
+    val avatarPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = MediaFileInspector.inspectAndCache(context, uri, persistLocalCopy = true, computeSha256 = false)
+                res.onSuccess { inspected ->
+                    val localPath = inspected.localCachePath.ifBlank { uri.toString() }
+                    onUpdateAvatar(localPath)
+                }
+            }
+        }
+    }
+
+    val stickerPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        val packId = targetPackForSticker
+        if (uri != null && packId != null) {
+            scope.launch {
+                val res = MediaFileInspector.inspectAndCache(context, uri, persistLocalCopy = true, computeSha256 = false)
+                res.onSuccess { inspected ->
+                    onAddStickerToPack(packId, inspected.localCachePath.ifBlank { uri.toString() })
+                }
+            }
+        }
+        targetPackForSticker = null
+    }
 
     Scaffold(
         topBar = {
@@ -77,7 +123,9 @@ fun ProfileScreen(
                     if (isEditing) {
                         TextButton(
                             onClick = {
-                                onUpdateProfile(displayName, bio)
+                                val cleaned = displayName.trim().ifBlank { currentUser.displayName }
+                                displayName = cleaned
+                                onUpdateProfile(cleaned, bio.trim())
                                 isEditing = false
                             }
                         ) {
@@ -106,7 +154,7 @@ fun ProfileScreen(
                 .padding(paddingValues)
                 .padding(16.dp)
         ) {
-            // Profile Header Card
+            // Profile Header Card (with clickable real avatar picker)
             item {
                 Column(
                     modifier = Modifier
@@ -116,31 +164,48 @@ fun ProfileScreen(
                         .padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Box(contentAlignment = Alignment.BottomEnd) {
+                    Box(
+                        contentAlignment = Alignment.BottomEnd,
+                        modifier = Modifier.clickable {
+                            avatarPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        }
+                    ) {
                         Box(
                             modifier = Modifier
-                                .size(88.dp)
+                                .size(92.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF242424)),
+                                .background(Color(0xFF242424))
+                                .border(2.dp, Color(accent.primaryHex), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = displayName.ifBlank { "U" }.take(1).uppercase(),
-                                color = Color.White,
-                                fontSize = 36.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            if (currentUser.avatarUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = currentUser.avatarUrl,
+                                    contentDescription = displayName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                )
+                            } else {
+                                Text(
+                                    text = displayName.ifBlank { "U" }.take(1).uppercase(),
+                                    color = Color.White,
+                                    fontSize = 36.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
+                                .size(30.dp)
                                 .clip(CircleShape)
                                 .background(Color(accent.primaryHex)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.CameraAlt,
-                                contentDescription = "Change photo",
+                                contentDescription = "Change avatar photo",
                                 tint = Color.White,
                                 modifier = Modifier.size(16.dp)
                             )
@@ -204,7 +269,7 @@ fun ProfileScreen(
             // Global Accent Themes
             item {
                 Text(
-                    text = "Theme Accent (Instagram Dark)",
+                    text = "Theme Accent (OLED Dark)",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary,
@@ -238,6 +303,48 @@ fun ProfileScreen(
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+
+            // Chat Wallpaper Presets
+            item {
+                Text(
+                    text = "Chat Wallpaper",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
+                    modifier = Modifier.padding(bottom = 10.dp)
+                )
+                val presets = listOf(
+                    "pure-black" to ("Pure OLED" to Color(0xFF000000)),
+                    "midnight-gradient" to ("Midnight" to Color(0xFF070712)),
+                    "emerald-mist" to ("Emerald" to Color(0xFF04100C)),
+                    "crimson-velvet" to ("Crimson" to Color(0xFF120508))
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(presets) { (key, info) ->
+                        val isSelected = wallpaper == key || (wallpaper.isBlank() && key == "pure-black")
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(info.second)
+                                .border(
+                                    width = if (isSelected) 2.dp else 1.dp,
+                                    color = if (isSelected) Color(accent.primaryHex) else BorderDark,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable { onUpdateWallpaper(key) }
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = info.first,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
                         }
                     }
                 }
@@ -299,7 +406,7 @@ fun ProfileScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column {
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = pack.name,
                                             style = MaterialTheme.typography.titleMedium,
@@ -312,12 +419,26 @@ fun ProfileScreen(
                                         )
                                     }
 
-                                    IconButton(onClick = { onDeleteStickerPack(pack.id) }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Delete Pack",
-                                            tint = Color(0xFFEF4444)
-                                        )
+                                    Row {
+                                        IconButton(onClick = {
+                                            targetPackForSticker = pack.id
+                                            stickerPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        }) {
+                                            Icon(
+                                                imageVector = Icons.Default.AddPhotoAlternate,
+                                                contentDescription = "Add Sticker",
+                                                tint = Color(accent.primaryHex)
+                                            )
+                                        }
+                                        IconButton(onClick = { onDeleteStickerPack(pack.id) }) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "Delete Pack",
+                                                tint = Color(0xFFEF4444)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -326,7 +447,7 @@ fun ProfileScreen(
                 }
             }
 
-            // App Updates & Version Section (Fast In-App Download, Zero Browser Redirection)
+            // App Updates & Version Section (In-App APK Downloader preserved intact)
             item {
                 Spacer(modifier = Modifier.height(28.dp))
                 Text(
@@ -356,7 +477,7 @@ fun ProfileScreen(
                                 fontSize = 13.sp
                             )
                             Text(
-                                text = "v1.0.0 (Native Android APK)",
+                                text = "v${BuildConfig.VERSION_NAME} (Native Android APK)",
                                 color = TextPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp

@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="cache_updates" path="updates/" />
+    <cache-path name="cache_shared_media" path="shared_media/" />
+    <cache-path name="cache_all" path="." />
     <external-cache-path name="ext_cache_updates" path="updates/" />
     <external-files-path name="ext_files_updates" path="updates/" />
     <files-path name="internal_files" path="." />
+    <files-path name="voice_notes" path="voice_notes/" />
+    <files-path name="media_files" path="media/" />
+    <files-path name="p2p_downloads" path="p2p_downloads/" />
 </paths>

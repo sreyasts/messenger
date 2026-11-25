@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { X, Flame, ShieldAlert, Sparkles } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X, ShieldAlert, ImageOff } from 'lucide-react';
 import { Message } from '@/types/database';
 
 interface ViewOnceModalProps {
@@ -20,18 +20,34 @@ export default function ViewOnceModal({
   onMarkAsViewed,
 }: ViewOnceModalProps) {
   const [progress, setProgress] = useState(100);
+  const [imageError, setImageError] = useState(false);
+  const markedMessageIdRef = useRef<string | null>(null);
+  const onCloseRef = useRef(onClose);
+  const onViewedRef = useRef(onViewed);
+  const onMarkAsViewedRef = useRef(onMarkAsViewed);
+
+  onCloseRef.current = onClose;
+  onViewedRef.current = onViewed;
+  onMarkAsViewedRef.current = onMarkAsViewed;
+
+  useEffect(() => {
+    setProgress(100);
+    setImageError(false);
+  }, [message?.id]);
 
   useEffect(() => {
     if (!isOpen || !message || message.viewed_at) return;
 
-    // Immediately trigger server audit update: viewed_at = NOW() (call once)
-    if (onViewed) {
-      onViewed(message.id);
-    } else if (onMarkAsViewed) {
-      onMarkAsViewed(message.id);
+    // Trigger DB audit update once per message open (sets viewed_at = NOW(), keeps row & storage intact)
+    if (markedMessageIdRef.current !== message.id) {
+      markedMessageIdRef.current = message.id;
+      if (onViewedRef.current) {
+        onViewedRef.current(message.id);
+      } else if (onMarkAsViewedRef.current) {
+        onMarkAsViewedRef.current(message.id);
+      }
     }
 
-    // Ephemeral 30s auto-dismiss progress bar
     const durationMs = 30000;
     const intervalMs = 200;
     const decrement = (intervalMs / durationMs) * 100;
@@ -40,16 +56,15 @@ export default function ViewOnceModal({
       setProgress((prev) => {
         if (prev <= 0) {
           clearInterval(timer);
-          onClose();
+          onCloseRef.current();
           return 0;
         }
         return prev - decrement;
       });
     }, intervalMs);
 
-    // Keyboard ESC listener
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', handleKeyDown);
 
@@ -57,9 +72,11 @@ export default function ViewOnceModal({
       clearInterval(timer);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, message, onViewed, onMarkAsViewed, onClose]);
+  }, [isOpen, message?.id, message?.viewed_at]);
 
   if (!isOpen || !message || message.viewed_at) return null;
+
+  const isPhoto = message.media_type === 'image' && !!message.media_url;
 
   return (
     <div
@@ -69,7 +86,6 @@ export default function ViewOnceModal({
     >
       {/* Top Header Bar & Progress Bar */}
       <div className="w-full">
-        {/* Progress countdown bar */}
         <div className="w-full h-1 bg-white/10">
           <div
             className="h-full bg-gradient-to-r from-[#E1306C] to-amber-400 transition-all duration-200"
@@ -83,7 +99,7 @@ export default function ViewOnceModal({
               1
             </div>
             <span className="text-xs font-semibold text-white tracking-wide">
-              View Once Media
+              View Once Photo
             </span>
           </div>
 
@@ -91,53 +107,44 @@ export default function ViewOnceModal({
             type="button"
             onClick={onClose}
             className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+            title="Close View Once Photo"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
       </div>
 
-      {/* Main Ephemeral Media Display Stage */}
+      {/* Main Ephemeral Photo Stage */}
       <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
-        {message.media_type === 'video' ? (
-          <video
-            src={message.media_url}
-            autoPlay
-            playsInline
-            controlsList="nodownload noplaybackrate"
-            disablePictureInPicture
-            className="max-h-[80vh] max-w-full rounded-2xl object-contain shadow-2xl"
-          />
-        ) : message.media_type === 'text' ? (
-          <div className="max-w-md w-full p-8 rounded-3xl bg-[#141414] border border-[#2A2A2A] shadow-2xl shadow-[#E1306C]/10 text-center space-y-4 animate-fade-in relative">
-            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-[#E1306C]/20 to-[#F27121]/20 text-[#FF4D94] border border-[#E1306C]/40 flex items-center justify-center mx-auto text-lg font-bold shadow-inner">
-              1
-            </div>
-            <p className="text-lg text-white font-medium leading-relaxed whitespace-pre-wrap select-none break-words">
-              {message.content}
-            </p>
-            <span className="text-xs text-[#777777] block">
-              Ephemeral View-Once Message
-            </span>
-          </div>
-        ) : (
+        {isPhoto && !imageError ? (
           <img
             src={message.media_url}
-            alt="View Once Ephemeral Media"
+            alt="View Once Ephemeral Photo"
             draggable={false}
+            onError={() => setImageError(true)}
             className="max-h-[80vh] max-w-full rounded-2xl object-contain shadow-2xl pointer-events-none select-none"
           />
+        ) : (
+          <div className="max-w-sm w-full p-8 rounded-3xl bg-[#141414] border border-[#2A2A2A] text-center space-y-3">
+            <ImageOff className="w-10 h-10 text-[#666666] mx-auto" />
+            <p className="text-sm font-semibold text-white">
+              Photo unavailable
+            </p>
+            <p className="text-xs text-[#888888]">
+              This View Once photo has already been opened or could not be loaded.
+            </p>
+          </div>
         )}
       </div>
 
-      {/* Bottom Privacy & Security Banner */}
+      {/* Bottom Privacy & Audit Retention Banner */}
       <div className="p-4 text-center bg-gradient-to-t from-black/90 to-transparent flex flex-col items-center gap-1">
         <div className="flex items-center gap-1.5 text-xs text-[#A0A0A0]">
           <ShieldAlert className="w-4 h-4 text-amber-400" />
           <span>Screenshots and screen recordings are restricted</span>
         </div>
         <p className="text-[10px] text-[#666666]">
-          This media disappears forever once closed. Full audit records are permanently retained in server database.
+          This photo cannot be reopened once closed. Audit records remain preserved in database.
         </p>
       </div>
     </div>

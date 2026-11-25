@@ -88,6 +88,27 @@ test('Tier 1 & 2: Android Manifest & Gradle Verification (Physical or Scaffold C
       assert.ok(fs.existsSync(downloaderPath), 'InAppUpdateDownloader.kt must exist');
       assert.ok(fs.existsSync(storagePath), 'MessageStorage.kt must exist');
     });
+
+    await t.test('Android native pickers, LiveKit SDK, hardware audio, and VoiceNoteManager are wired', () => {
+      const chatDetailPath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'ui', 'screens', 'ChatDetailScreen.kt');
+      const inspectorPath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'media', 'MediaFileInspector.kt');
+      const voiceNotePath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'media', 'VoiceNoteManager.kt');
+      const callMgrPath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'telecom', 'LiveKitCallManager.kt');
+      const audioMgrPath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'telecom', 'CallAudioManager.kt');
+      const syncClientPath = path.join(ROOT_DIR, 'apps', 'android', 'app', 'src', 'main', 'java', 'com', 'privatemessenger', 'app', 'data', 'remote', 'SupabaseSyncClient.kt');
+
+      assert.ok(fs.existsSync(inspectorPath), 'MediaFileInspector.kt must exist');
+      assert.ok(fs.existsSync(voiceNotePath), 'VoiceNoteManager.kt must exist');
+      assert.ok(fs.existsSync(callMgrPath), 'LiveKitCallManager.kt must exist');
+      assert.ok(fs.existsSync(audioMgrPath), 'CallAudioManager.kt must exist');
+      assert.ok(fs.existsSync(syncClientPath), 'SupabaseSyncClient.kt must exist');
+
+      const chatDetail = fs.readFileSync(chatDetailPath, 'utf-8');
+      assert.match(chatDetail, /ActivityResultContracts\.PickVisualMedia/);
+      assert.match(chatDetail, /ActivityResultContracts\.OpenDocument/);
+      assert.match(gradle, /io\.livekit:livekit-android/);
+      assert.ok(manifest.includes('android.permission.FOREGROUND_SERVICE_DATA_SYNC'), 'Missing FOREGROUND_SERVICE_DATA_SYNC');
+    });
   } else {
     await t.test('Android scaffold contract requirements validator', () => {
       // Validate the formal schema rules that M3 must implement

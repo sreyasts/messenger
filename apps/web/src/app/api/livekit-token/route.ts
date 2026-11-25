@@ -7,6 +7,10 @@ interface TokenRequestBody {
   participantName?: string;
 }
 
+const NO_STORE_HEADERS = {
+  'Cache-Control': 'no-store, max-age=0',
+};
+
 function generateLiveKitJwt(
   apiKey: string,
   apiSecret: string,
@@ -19,6 +23,7 @@ function generateLiveKitJwt(
   const payload = {
     iss: apiKey,
     sub: identity,
+    jti: identity,
     name: name || identity,
     nbf: now,
     exp: now + 14400, // 4 hours TTL
@@ -28,6 +33,7 @@ function generateLiveKitJwt(
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
+      canUpdateOwnMetadata: true,
     },
   };
 
@@ -46,13 +52,26 @@ export async function POST(req: Request) {
     let body: TokenRequestBody;
     try {
       body = await req.json();
-      if (!body || typeof body !== 'object') {
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
         throw new Error('Missing or invalid JSON body');
       }
     } catch {
       return NextResponse.json(
         { error: 'Invalid JSON or missing request body.' },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
+      );
+    }
+
+    if (
+      (body.roomName !== undefined && typeof body.roomName !== 'string') ||
+      (body.participantIdentity !== undefined && typeof body.participantIdentity !== 'string') ||
+      (body.participantName !== undefined &&
+        body.participantName !== null &&
+        typeof body.participantName !== 'string')
+    ) {
+      return NextResponse.json(
+        { error: 'Invalid parameter types: roomName and participantIdentity must be strings.' },
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -63,7 +82,14 @@ export async function POST(req: Request) {
     if (!roomName || !participantIdentity) {
       return NextResponse.json(
         { error: "Missing required parameters: 'roomName' and 'participantIdentity' are required." },
-        { status: 400 }
+        { status: 400, headers: NO_STORE_HEADERS }
+      );
+    }
+
+    if (roomName.length > 256 || participantIdentity.length > 256) {
+      return NextResponse.json(
+        { error: 'Parameter length exceeds 256 characters.' },
+        { status: 400, headers: NO_STORE_HEADERS }
       );
     }
 
@@ -84,13 +110,17 @@ export async function POST(req: Request) {
         participantName
       );
 
-      return NextResponse.json({
-        token,
-        livekitUrl,
-        roomName,
-        participantIdentity,
-        expiresInSeconds: 14400,
-      });
+      return NextResponse.json(
+        {
+          token,
+          livekitUrl,
+          roomName,
+          participantIdentity,
+          expiresInSeconds: 14400,
+          isMock: false,
+        },
+        { headers: NO_STORE_HEADERS }
+      );
     }
 
     // 2. Proxy to Supabase Edge Function if live Supabase is configured
@@ -102,23 +132,29 @@ export async function POST(req: Request) {
       !supabaseUrl.includes('mock-messenger') &&
       !supabaseAnonKey.includes('mock-')
     ) {
+      const incomingAuth = req.headers.get('authorization');
       try {
         const edgeRes = await fetch(`${supabaseUrl}/functions/v1/livekit-token`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${supabaseAnonKey}`,
+            apikey: supabaseAnonKey,
+            Authorization: incomingAuth || `Bearer ${supabaseAnonKey}`,
           },
           body: JSON.stringify({
             roomName,
             participantIdentity,
             participantName,
           }),
+          signal: AbortSignal.timeout(5000),
         });
 
         if (edgeRes.ok) {
           const edgeData = await edgeRes.json();
-          return NextResponse.json(edgeData);
+          return NextResponse.json(
+            { ...edgeData, isMock: false },
+            { headers: NO_STORE_HEADERS }
+          );
         }
       } catch (proxyError) {
         console.warn('Proxy to Supabase Edge Function failed, falling back to mock token:', proxyError);
@@ -134,18 +170,22 @@ export async function POST(req: Request) {
     };
     const mockToken = `mock-livekit-jwt-${Buffer.from(JSON.stringify(mockPayload)).toString('base64url')}`;
 
-    return NextResponse.json({
-      token: mockToken,
-      livekitUrl,
-      roomName,
-      participantIdentity,
-      expiresInSeconds: 14400,
-      isMock: true,
-    });
-  } catch (error: any) {
     return NextResponse.json(
-      { error: error?.message || 'Failed to generate token' },
-      { status: 500 }
+      {
+        token: mockToken,
+        livekitUrl,
+        roomName,
+        participantIdentity,
+        expiresInSeconds: 14400,
+        isMock: true,
+      },
+      { headers: NO_STORE_HEADERS }
+    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Failed to generate token';
+    return NextResponse.json(
+      { error: message },
+      { status: 500, headers: NO_STORE_HEADERS }
     );
   }
 }

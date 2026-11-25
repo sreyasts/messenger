@@ -3,7 +3,19 @@
 import React, { useState, useMemo } from 'react';
 import { Conversation, User } from '@/types/database';
 import { useTheme } from '@/lib/theme/ThemeContext';
-import { Search, X, SquarePen, Plus, Users, Image as ImageIcon, Mic, FileText, Video, Sparkles } from 'lucide-react';
+import {
+  Search,
+  X,
+  SquarePen,
+  Plus,
+  Users,
+  Image as ImageIcon,
+  Mic,
+  FileText,
+  Video,
+  Sparkles,
+  CheckCircle2,
+} from 'lucide-react';
 
 interface ChatsListProps {
   conversations: Conversation[];
@@ -21,7 +33,7 @@ function formatConversationTime(timestamp?: string): string {
     const now = new Date();
     const diffHours = (now.getTime() - date.getTime()) / (1000 * 3600);
 
-    if (diffHours < 24) {
+    if (diffHours < 24 && now.getDate() === date.getDate()) {
       return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } else if (diffHours < 48) {
       return 'Yesterday';
@@ -44,7 +56,6 @@ export default function ChatsList({
   const { config } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Real-time conversation search filtering
   const filteredConversations = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return conversations;
@@ -53,15 +64,22 @@ export default function ChatsList({
       const titleMatch = (c.title || '').toLowerCase().includes(q);
       const participantMatch = (c.other_user?.display_name || '').toLowerCase().includes(q);
       const messageMatch = (c.last_message?.content || '').toLowerCase().includes(q);
-      return titleMatch || participantMatch || messageMatch;
+      const fileMatch = (c.last_message?.file_name || '').toLowerCase().includes(q);
+      return titleMatch || participantMatch || messageMatch || fileMatch;
     });
   }, [conversations, searchQuery]);
 
-  // Extract active friends row
+  // Deduplicated active friends row
   const activeFriends = useMemo(() => {
-    return conversations
-      .filter((c) => c.other_user)
-      .map((c) => c.other_user as User);
+    const seen = new Set<string>();
+    const list: User[] = [];
+    for (const c of conversations) {
+      if (c.other_user && !seen.has(c.other_user.id)) {
+        seen.add(c.other_user.id);
+        list.push(c.other_user);
+      }
+    }
+    return list;
   }, [conversations]);
 
   const renderLastMessageSnippet = (c: Conversation) => {
@@ -73,10 +91,18 @@ export default function ChatsList({
     }
 
     if (msg.is_view_once) {
+      if (msg.viewed_at) {
+        return (
+          <span className="text-xs text-[#888888] flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Opened</span>
+          </span>
+        );
+      }
       return (
         <span className="text-xs italic flex items-center space-x-1" style={{ color: config.primaryHex }}>
           <ImageIcon className="w-3.5 h-3.5 inline mr-1" />
-          <span>View Once media</span>
+          <span>View Once Photo</span>
         </span>
       );
     }
@@ -102,12 +128,18 @@ export default function ChatsList({
         );
       case 'file':
         return (
+          <span className="text-xs text-[#A0A0A0] flex items-center truncate">
+            <FileText className="w-3.5 h-3.5 mr-1 flex-shrink-0" />
+            <span className="truncate">{msg.file_name || 'File'}</span>
+          </span>
+        );
+      case 'gif':
+        return (
           <span className="text-xs text-[#A0A0A0] flex items-center">
-            <FileText className="w-3.5 h-3.5 mr-1" /> {msg.file_name || 'File'}
+            <Sparkles className="w-3.5 h-3.5 mr-1" /> GIF
           </span>
         );
       case 'sticker':
-      case 'gif':
         return (
           <span className="text-xs text-[#A0A0A0] flex items-center">
             <Sparkles className="w-3.5 h-3.5 mr-1" /> Sticker
@@ -115,7 +147,11 @@ export default function ChatsList({
         );
       default:
         return (
-          <span className={`text-xs truncate max-w-[200px] ${c.unread_count && c.unread_count > 0 ? 'text-white font-medium' : 'text-[#A0A0A0]'}`}>
+          <span
+            className={`text-xs truncate max-w-[200px] block ${
+              c.unread_count && c.unread_count > 0 ? 'text-white font-medium' : 'text-[#A0A0A0]'
+            }`}
+          >
             {msg.content}
           </span>
         );
@@ -123,11 +159,10 @@ export default function ChatsList({
   };
 
   return (
-    <div className="h-full w-full flex flex-col bg-black text-white select-none">
+    <div className="h-full w-full flex flex-col bg-black text-white select-none relative">
       {/* Top Header */}
       <div className="h-16 px-4 flex items-center justify-between border-b border-[#1F1F1F] bg-black/90 backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center space-x-3">
-          {/* User Profile Avatar with Online Green Dot */}
           <button
             onClick={onOpenProfile}
             title="Open Profile & Settings"
@@ -149,12 +184,9 @@ export default function ChatsList({
             <div className="w-3 h-3 bg-[#10B981] rounded-full border-2 border-black absolute bottom-0 right-0" />
           </button>
 
-          <h1 className="text-xl font-bold tracking-tight text-white">
-            Messages
-          </h1>
+          <h1 className="text-xl font-bold tracking-tight text-white">Messages</h1>
         </div>
 
-        {/* New Chat Button */}
         <button
           onClick={onOpenNewChat}
           title="New Message"
@@ -172,7 +204,7 @@ export default function ChatsList({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search messages..."
+            placeholder="Search conversations..."
             className="bg-transparent text-sm text-white placeholder-[#666666] outline-none flex-1"
           />
           {searchQuery && (
@@ -183,7 +215,7 @@ export default function ChatsList({
         </div>
       </div>
 
-      {/* Active Friends Row (Instagram-Style "Active Now") */}
+      {/* Active Friends Row */}
       {activeFriends.length > 0 && !searchQuery && (
         <div className="py-2 border-b border-[#1A1A1A] overflow-x-auto no-scrollbar px-3">
           <div className="flex items-center space-x-4">
@@ -199,9 +231,15 @@ export default function ChatsList({
                 <div className="w-12 h-12 rounded-full relative p-[2px] bg-gradient-to-tr from-[#2A2A2A] to-[#444444] group-hover:from-[#E1306C] group-hover:to-[#F27121] transition">
                   <div className="w-full h-full rounded-full overflow-hidden bg-[#121212] flex items-center justify-center">
                     {friend.avatar_url ? (
-                      <img src={friend.avatar_url} alt={friend.display_name} className="w-full h-full object-cover" />
+                      <img
+                        src={friend.avatar_url}
+                        alt={friend.display_name}
+                        className="w-full h-full object-cover"
+                      />
                     ) : (
-                      <span className="text-xs font-bold text-white">{friend.display_name.slice(0, 1)}</span>
+                      <span className="text-xs font-bold text-white">
+                        {friend.display_name.slice(0, 1).toUpperCase()}
+                      </span>
                     )}
                   </div>
                   <div className="w-3.5 h-3.5 bg-[#10B981] rounded-full border-2 border-black absolute bottom-0 right-0" />
@@ -237,7 +275,6 @@ export default function ChatsList({
                 }`}
                 style={isActive ? { borderLeftColor: config.primaryHex } : undefined}
               >
-                {/* Avatar with Online Badge */}
                 <div className="relative flex-shrink-0">
                   <div className="w-12 h-12 rounded-full overflow-hidden bg-[#181818] border border-[#2A2A2A] flex items-center justify-center">
                     {avatarUrl ? (
@@ -245,7 +282,9 @@ export default function ChatsList({
                     ) : conv.type === 'group' ? (
                       <Users className="w-6 h-6 text-[#888888]" />
                     ) : (
-                      <span className="text-sm font-bold text-white">{displayName.slice(0, 2).toUpperCase()}</span>
+                      <span className="text-sm font-bold text-white">
+                        {displayName.slice(0, 2).toUpperCase()}
+                      </span>
                     )}
                   </div>
                   {conv.type === 'direct' && (
@@ -253,25 +292,31 @@ export default function ChatsList({
                   )}
                 </div>
 
-                {/* Details */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
-                    <h3 className={`text-sm truncate ${conv.unread_count && conv.unread_count > 0 ? 'font-bold text-white' : 'font-medium text-white'}`}>
+                    <h3
+                      className={`text-sm truncate ${
+                        conv.unread_count && conv.unread_count > 0
+                          ? 'font-bold text-white'
+                          : 'font-medium text-white'
+                      }`}
+                    >
                       {displayName}
                     </h3>
-                    <span suppressHydrationWarning className="text-[11px] text-[#777777] ml-2 flex-shrink-0">
+                    <span
+                      suppressHydrationWarning
+                      className="text-[11px] text-[#777777] ml-2 flex-shrink-0"
+                    >
                       {formatConversationTime(conv.last_message?.created_at || conv.updated_at)}
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <div className="flex-1 min-w-0 pr-2">
-                      {renderLastMessageSnippet(conv)}
-                    </div>
+                    <div className="flex-1 min-w-0 pr-2">{renderLastMessageSnippet(conv)}</div>
 
                     {conv.unread_count && conv.unread_count > 0 ? (
                       <div
-                        className={`min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-md ${config.gradientClass}`}
+                        className={`min-w-[18px] h-[18px] px-1.5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shadow-md ${config.gradientClass}`}
                       >
                         {conv.unread_count}
                       </div>
@@ -284,7 +329,7 @@ export default function ChatsList({
         )}
       </div>
 
-      {/* Floating Action Button (FAB on Mobile) */}
+      {/* Floating Action Button (Mobile) */}
       <button
         onClick={onOpenNewChat}
         title="Start New Chat"
